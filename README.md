@@ -41,6 +41,8 @@ Patrol is designed to be:
 
 ## Deployment
 
+### Integration with edge load balancers via Lua
+
 Patrol is meant to be deployed as a side-car to edge load balancers
 and reverse proxies that have dynamic routing capabilities with
 Lua.
@@ -56,7 +58,19 @@ This works because a `Bucket` is internally composed of strictly monotically
 increasing counters. When merging, we simply pick the largest value for a field,
 which is determined to be the latest value across the whole cluster.
 
-#### Failure modes
+### Cluster configuration
+
+Cluster configuration can either be `static` or dynamic with `memberlist`.
+
+With static configuration, the `ip:port` pairs of all cluster nodes need to
+be specified with multiple `-node` flags.
+
+A config management tool like Ansible is recommended to automate the provisioning
+of the OS service scripts with this configuration pre-populated.
+
+Memberlist support is experimental and untested.
+
+### Failure modes
 
 Under network partitions, nodes won't be able to get the latest `Buckets` from
 the other side of the partition. This means that the there may be temporary
