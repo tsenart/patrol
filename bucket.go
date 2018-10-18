@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// Buckets is a map from bucket name to Bucket
+type Buckets map[string]Bucket
+
 // Bucket implements a simple Token Bucket with underlying
 // CRDT G-Counter semantics which allow it to be merged without
 // coordination with other Buckets.

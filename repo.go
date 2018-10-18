@@ -11,10 +11,13 @@ type Repo interface {
 	GetBucket(ctx context.Context, name string) (Bucket, error)
 
 	// GetBuckets returns all Buckets.
-	GetBuckets(ctx context.Context) (map[string]Bucket, error)
+	GetBuckets(ctx context.Context) (Buckets, error)
 
 	// UpdateBucket updates the bucket with the given name.
 	UpdateBucket(ctx context.Context, name string, b Bucket) error
+
+	// UpdateBuckets updates all the given Buckets.
+	UpdateBuckets(ctx context.Context, bs Buckets) error
 }
 
 var _ Repo = (*InMemoryRepo)(nil)
@@ -23,7 +26,7 @@ var _ Repo = (*InMemoryRepo)(nil)
 // in-memory data structure.
 type InMemoryRepo struct {
 	mu      sync.RWMutex
-	buckets map[string]Bucket
+	buckets Buckets
 }
 
 // NewInMemoryRepo return a new InMemoryRepo.
@@ -42,7 +45,7 @@ func (s *InMemoryRepo) GetBucket(_ context.Context, name string) (Bucket, error)
 }
 
 // GetBuckets gets all the buckets.
-func (s *InMemoryRepo) GetBuckets(context.Context) (map[string]Bucket, error) {
+func (s *InMemoryRepo) GetBuckets(context.Context) (Buckets, error) {
 	s.mu.RLock()
 	buckets := make(map[string]Bucket, len(s.buckets))
 	for name, bucket := range s.buckets {
@@ -58,5 +61,15 @@ func (s *InMemoryRepo) UpdateBucket(_ context.Context, name string, b Bucket) er
 	current := s.buckets[name]
 	s.buckets[name] = Merge(b, current)
 	s.mu.Unlock()
+	return nil
+}
+
+// UpdateBuckets updates all the given Buckets.
+func (s *InMemoryRepo) UpdateBuckets(_ context.Context, bs Buckets) error {
+	for name, bucket := range bs {
+		s.mu.Lock()
+		s.buckets[name] = Merge(s.buckets[name], bucket)
+		s.mu.Unlock()
+	}
 	return nil
 }
