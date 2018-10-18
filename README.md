@@ -37,6 +37,7 @@ Patrol is designed to be:
 - Easy to deploy: No dependencies on centralized stores.
 - Operator friendly: Simple API and small configuration surface area.
 - Performant: Minimal overhead, high concurrency support.
+- Fault tolerant: Eventually consistent, best-effort state synchronization between cluster nodes.
 
 ## Deployment
 
@@ -44,9 +45,8 @@ Patrol is meant to be deployed as a side-car to edge load balancers
 and reverse proxies that have dynamic routing capabilities with
 Lua.
 
-```lua
-
-```
+The load balancer or reverse proxy needs to be extended so that it asks
+the side-car Patrol instance if it should pass or block a given request.
 
 ## API
 
@@ -69,14 +69,21 @@ Here are examples of configuration values for the `rate` parameter:
 Used between Patrol nodes for periodic asynchronous bucket state synchronization (by default, every second).
 
 ```json
-{
-  "90.12.33.41": { ... }
-}
+  {
+    "81.23.12.9": {"Added":56604,"Taken":56455,"Last":1539884470813616000},
+    "81.92.1.33": {"Added":56590,"Taken":56440,"Last":1539884470813616000}
+  }
 ```
 
+## Testing
 
-## Benchmarks
-
-```plaintext
-TO BE DONE
+```console
+go test -v ./...
 ```
+
+## Future work
+
+- Experiment with Memberlist cluster mode in a realistic environment.
+- Load test a real cluster.
+- Write and publish Docker image.
+- Provide working examples of Lua integrations with nginx and Apache Traffic Server.
