@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"net/http/pprof"
+
 	"github.com/streadway/handy/accept"
 	"github.com/streadway/handy/encoding"
 )
@@ -34,20 +36,24 @@ func (api *API) Handler() http.Handler {
 	handleBuckets := accept.Middleware(mediaTypes...)(
 		encoding.GzipTypes(mediaTypes, http.HandlerFunc(api.handleBuckets)))
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/take" && r.Method == http.MethodPost:
-			api.handleTake(w, r)
-		case r.URL.Path == "/buckets" && r.Method == http.MethodGet:
-			handleBuckets.ServeHTTP(w, r)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
+	mux := http.NewServeMux()
+	mux.Handle("/buckets", handleBuckets)
+	mux.HandleFunc("/take", api.handleTake)
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	return mux
 }
 
 // handler for GET /buckets
 func (api *API) handleBuckets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Accept"))
 	if err != nil {
 		mt = "application/json"
@@ -82,6 +88,11 @@ func (api *API) handleBuckets(w http.ResponseWriter, r *http.Request) {
 
 // handler for POST /take?bucket=my-bucket-name&count=1&rate=100:1s
 func (api *API) handleTake(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
 	q := r.URL.Query()
 
 	name := q.Get("bucket")
