@@ -3,6 +3,8 @@ package patrol
 import (
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,6 +23,30 @@ type Bucket struct {
 type Rate struct {
 	Freq int
 	Per  time.Duration
+}
+
+// ParseRate returns a new Rate parsed from the give string.
+func ParseRate(v string) (r Rate, err error) {
+	ps := strings.SplitN(v, ":", 2)
+	switch len(ps) {
+	case 1:
+		ps = append(ps, "1s")
+	case 0:
+		return Rate{}, fmt.Errorf("format %q doesn't match the \"freq:duration\" format (i.e. 50:1s)", v)
+	}
+
+	r.Freq, err = strconv.Atoi(ps[0])
+	if err != nil {
+		return r, err
+	}
+
+	switch ps[1] {
+	case "ns", "us", "µs", "ms", "s", "m", "h":
+		ps[1] = "1" + ps[1]
+	}
+
+	r.Per, err = time.ParseDuration(ps[1])
+	return r, err
 }
 
 // IsZero returns true if either Freq or Per are zero valued.
@@ -115,7 +141,7 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool, rem uint64) {
 
 // Merge merges multiple Buckets, using G-counter CRDT semantics
 // with its counters, picking the largest values for each field.
-func Merge(bs ...*Bucket) *Bucket {
+func Merge(bs ...Bucket) Bucket {
 	var max Bucket
 	for _, b := range bs {
 		if b == nil {
@@ -134,5 +160,5 @@ func Merge(bs ...*Bucket) *Bucket {
 			max.last = b.last
 		}
 	}
-	return &max
+	return max
 }
