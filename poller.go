@@ -1,6 +1,7 @@
 package patrol
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/gob"
 	"log"
@@ -93,6 +94,8 @@ func (p *Poller) sync(ctx context.Context, node string) error {
 	}
 
 	req.Header.Add("Accept", "application/x-gob")
+	req.Header.Add("Accept-Encoding", "gzip")
+
 	res, err := p.cli.Do(req.WithContext(ctx))
 	if err != nil {
 		return err
@@ -100,8 +103,13 @@ func (p *Poller) sync(ctx context.Context, node string) error {
 
 	defer res.Body.Close()
 
+	body, err := gzip.NewReader(res.Body)
+	if err != nil {
+		return err
+	}
+
 	var bs Buckets
-	if err = gob.NewDecoder(res.Body).Decode(&bs); err != nil {
+	if err = gob.NewDecoder(body).Decode(&bs); err != nil {
 		return err
 	}
 

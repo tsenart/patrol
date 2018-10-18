@@ -6,13 +6,47 @@ consistent asynchronous state replication. Is uses a modified version of
 the [Token Bucket](https://en.wikipedia.org/wiki/Token_bucket) algorithm
 underneath to support CRDT semantics.
 
+## Installation
+
+```console
+go get github.com/tsenart/patrol
+```
+
+## Usage
+
+```console
+Usage of patrol:
+  -cluster string
+    	Cluster mode [static | memberlist] (default "static")
+  -host string
+    	IP address to bind HTTP API to (default "0.0.0.0")
+  -interval duration
+    	Poller interval (default 1s)
+  -node value
+    	Static node for use with -cluster=static
+  -port string
+    	Port to bind HTTP API to (default "8080")
+  -timeout duration
+    	Poller HTTP client timeout (default 30s)
+```
+
 ## Design
 
 Patrol is designed to be:
 
-- Easy to deploy: No dependencies on centralized stores.  Operator
-- friendly: Simple API and small configuration surface area.
+- Easy to deploy: No dependencies on centralized stores.
+- Operator friendly: Simple API and small configuration surface area.
 - Performant: Minimal overhead, high concurrency support.
+
+## Deployment
+
+Patrol is meant to be deployed as a side-car to edge load balancers
+and reverse proxies that have dynamic routing capabilities with
+Lua.
+
+```lua
+
+```
 
 ## API
 
@@ -32,7 +66,7 @@ Here are examples of configuration values for the `rate` parameter:
 
 ### GET /buckets
 
-Used between Patrol nodes for periodic asynchronous bucket state replication (by default, every second).
+Used between Patrol nodes for periodic asynchronous bucket state synchronization (by default, every second).
 
 ```json
 {
@@ -40,15 +74,6 @@ Used between Patrol nodes for periodic asynchronous bucket state replication (by
 }
 ```
 
-## Deployment
-
-Patrol is meant to be deployed as a side-car to edge load balancers
-and reverse proxies that have dynamic routing capabilities with
-Lua.
-
-```lua
-
-```
 
 ## Benchmarks
 
