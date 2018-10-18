@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/gob"
 	"log"
-	"net"
 	"net/http"
 	"time"
 )
@@ -83,11 +82,12 @@ func (p *Poller) poll(ctx context.Context, nodes []string) {
 	for node, err := range errs {
 		p.log.Printf("poller: failed to poll %q: %v", node, err)
 	}
+
+	p.log.Printf("poller: finished polling %d nodes", len(nodes))
 }
 
 func (p *Poller) sync(ctx context.Context, node string) error {
-	addr := net.JoinHostPort(node, p.port)
-	req, err := http.NewRequest("GET", "http://"+addr+"/buckets", nil)
+	req, err := http.NewRequest("GET", "http://"+node+"/buckets", nil)
 	if err != nil {
 		return err
 	}
