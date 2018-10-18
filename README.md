@@ -120,4 +120,6 @@ go test -v ./...
 - Provide working examples of Lua integrations with nginx and Apache Traffic Server.
 - Instrument with Prometheus.
 - Structured logging.
-- Exponential back-off + circuit breaker when polling state from cluster nodes
+- Exponential back-off + circuit breaker when polling state from cluster nodes.
+- Explore alternative communication patterns for state propagation (push + Gossip)
+
