@@ -48,7 +48,9 @@ func TestCommand(t *testing.T) {
 	// Integration test
 	g.Add(func() error {
 		return testCommand(logger, nodes)
-	}, func(error) {})
+	}, func(error) {
+		// testCommand is not interruptable, it governs the run.Group
+	})
 
 	if err := g.Run(); err != nil {
 		t.Fatal(err)
