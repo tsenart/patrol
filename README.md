@@ -2,7 +2,7 @@
 
 Patrol is a zero-dependencies, operator friendly
 distributed rate limiting HTTP side-car API with eventually
-consistent asynchronous state replication. Is uses a modified version of
+consistent asynchronous state replication. It uses a modified version of
 the [Token Bucket](https://en.wikipedia.org/wiki/Token_bucket) algorithm
 underneath to support CRDT semantics.
 
