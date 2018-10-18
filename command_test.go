@@ -21,10 +21,9 @@ func TestCommand(t *testing.T) {
 		"127.0.0.1:12002",
 	}
 
-	var g run.Group
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := context.Background()
 
+	var g run.Group
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	for _, node := range nodes {
 		host, port, _ := net.SplitHostPort(node)
@@ -38,14 +37,16 @@ func TestCommand(t *testing.T) {
 			Nodes:    nodes,
 		}
 
+		ctx, cancel := context.WithCancel(ctx)
 		g.Add(func() error {
 			return cmd.Run(ctx)
-		}, func(error) {})
+		}, func(error) {
+			cancel()
+		})
 	}
 
 	// Integration test
 	g.Add(func() error {
-		defer cancel()
 		return testCommand(logger, nodes)
 	}, func(error) {})
 

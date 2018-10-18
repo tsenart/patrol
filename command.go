@@ -82,12 +82,12 @@ func (c *Command) Run(ctx context.Context) (err error) {
 			c.Log.Printf("Listening on %s", addr)
 			return srv.ListenAndServe()
 		}, func(error) {
-			srv.Shutdown(context.Background())
+			srv.Shutdown(ctx)
 		})
 	}
 
 	{ // Poller
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(ctx)
 		g.Add(func() error {
 			return poller.Poll(ctx, c.Interval)
 		}, func(error) {
@@ -96,15 +96,20 @@ func (c *Command) Run(ctx context.Context) (err error) {
 	}
 
 	// Signal handling and cancellation
-	g.Add(func() error {
-		sigch := make(chan os.Signal, 1)
-		signal.Notify(sigch, os.Interrupt)
-		select {
-		case <-sigch:
-		case <-ctx.Done():
-		}
-		return nil
-	}, func(error) {})
+	{
+		ctx, cancel := context.WithCancel(ctx)
+		g.Add(func() error {
+			sigch := make(chan os.Signal, 1)
+			signal.Notify(sigch, os.Interrupt)
+			select {
+			case <-sigch:
+			case <-ctx.Done():
+			}
+			return nil
+		}, func(error) {
+			cancel()
+		})
+	}
 
 	return g.Run()
 }
