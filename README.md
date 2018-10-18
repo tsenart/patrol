@@ -84,6 +84,8 @@ go test -v ./...
 ## Future work
 
 - Experiment with Memberlist cluster mode in a realistic environment.
-- Load test a real cluster.
+- Load test on a real cluster and iterate on results.
 - Write and publish Docker image.
 - Provide working examples of Lua integrations with nginx and Apache Traffic Server.
+- Instrument with Prometheus.
+- Structured logging.
