@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net"
@@ -31,7 +32,7 @@ func main() {
 
 	fs.Parse(os.Args[1:])
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Run(context.Background()); err != nil {
 		cmd.Log.Fatal(err)
 	}
 }

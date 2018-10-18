@@ -29,7 +29,7 @@ type Command struct {
 }
 
 // Run runs the Command and blocks until completion.
-func (c *Command) Run() (err error) {
+func (c *Command) Run(ctx context.Context) (err error) {
 	var cluster Cluster
 	switch c.Cluster {
 	case "static":
@@ -95,11 +95,14 @@ func (c *Command) Run() (err error) {
 		})
 	}
 
-	// Signal handling
+	// Signal handling and cancellation
 	g.Add(func() error {
 		sigch := make(chan os.Signal, 1)
 		signal.Notify(sigch, os.Interrupt)
-		<-sigch
+		select {
+		case <-sigch:
+		case <-ctx.Done():
+		}
 		return nil
 	}, func(error) {})
 
