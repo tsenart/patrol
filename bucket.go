@@ -10,11 +10,11 @@ import (
 
 // Bucket implements a simple Token Bucket with underlying
 // CRDT G-Counter semantics which allow it to be merged without
-// coordination with other Buckets. It is safe for concurrent use.
+// coordination with other Buckets.
 type Bucket struct {
-	added uint64
-	taken uint64
-	last  int64 // Unix nanoseconds timestamp since epoch
+	Added uint64
+	Taken uint64
+	Last  int64 // Unix nanoseconds timestamp since epoch
 }
 
 // Rate defines the maximum frequency of some events.
@@ -86,25 +86,25 @@ func (r Rate) Interval() time.Duration {
 
 // NewBucket returns a new Bucket with the given pre-filled tokens.
 func NewBucket(tokens uint64) *Bucket {
-	return &Bucket{added: tokens}
+	return &Bucket{Added: tokens}
 }
 
 // Take attempts to take n tokens out of the Bucket with the given capacity and
 // filling Rate at time t.
-func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool, rem uint64) {
-	// pre and post conditions:
-	//    b.added >= b.taken
-	//    b.added - b.taken <= capacity
-
-	last, now := b.last, t.UnixNano()
+func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
+	last, now := b.Last, t.UnixNano()
 	if now < last {
 		last = now
 	}
 
 	capacity := uint64(r.Freq)
 
+	// pre and post conditions:
+	//    b.Added >= b.Taken
+	//    b.Added - b.Taken <= capacity
+
 	// Calculate the current number of tokens.
-	tokens := b.added - b.taken
+	tokens := b.Added - b.Taken
 
 	// Avoid making delta overflow below when last is very old.
 	maxElapsed := r.Duration(capacity - tokens)
@@ -130,13 +130,11 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool, rem uint64) {
 		taken = newTokens
 	}
 
-	b.last = now
-	b.added += added
-	b.taken += taken
+	b.Last = now
+	b.Added += added
+	b.Taken += taken
 
-	fmt.Printf("last: %d, elapsed: %s, added: %d, taken: %d\n", b.last, elapsed, b.added, b.taken)
-
-	return ok, b.added - b.taken
+	return ok
 }
 
 // Merge merges multiple Buckets, using G-counter CRDT semantics
@@ -144,20 +142,16 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool, rem uint64) {
 func Merge(bs ...Bucket) Bucket {
 	var max Bucket
 	for _, b := range bs {
-		if b == nil {
-			continue
+		if max.Added < b.Added {
+			max.Added = b.Added
 		}
 
-		if max.added < b.added {
-			max.added = b.added
+		if max.Taken < b.Taken {
+			max.Taken = b.Taken
 		}
 
-		if max.taken < b.taken {
-			max.taken = b.taken
-		}
-
-		if max.last < b.last {
-			max.last = b.last
+		if max.Last < b.Last {
+			max.Last = b.Last
 		}
 	}
 	return max

@@ -37,7 +37,8 @@ func TestBucket_Take(t *testing.T) {
 		{elapsed: 5 * time.Minute, take: 0, ok: true, rem: 60},  // all tokens replenished, but capped at capacity
 	} {
 		now = now.Add(tc.elapsed)
-		ok, rem := bucket.Take(now, rate, tc.take)
+		ok := bucket.Take(now, rate, tc.take)
+		rem := bucket.Added - bucket.Taken
 		if ok != tc.ok || rem != tc.rem {
 			t.Errorf(
 				"\nBucket%+v:\n\tTake elapsed: %s, rate: %v, n: %d\n\t\thave (%t, %d)\n\t\twant (%t, %d)",
