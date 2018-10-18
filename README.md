@@ -113,6 +113,7 @@ go test -v ./...
 
 ## Future work
 
+- More comprehensive tests.
 - Experiment with Memberlist cluster mode in a realistic environment.
 - Load test on a real cluster and iterate on results.
 - Write and publish Docker image.
