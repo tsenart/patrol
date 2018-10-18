@@ -1,10 +1,10 @@
 # Patrol
 
-Patrol is an easy to use, zero-dependencies, operator friendly
+Patrol is a zero-dependencies, operator friendly
 distributed rate limiting HTTP side-car API with eventually
-consistent peer to peer state propagation. Is uses the
-[Token Bucket](https://en.wikipedia.org/wiki/Token_bucket) algorithm
-underneath.
+consistent asynchronous state replication. Is uses a modified version of
+the [Token Bucket](https://en.wikipedia.org/wiki/Token_bucket) algorithm
+underneath to support CRDT semantics.
 
 ## Design
 
@@ -16,7 +16,7 @@ Patrol is designed to be:
 
 ## API
 
-### POST /take/:bucket?rate=30:1m&count=1&burst=FIXME
+### POST /take/:bucket?rate=30:1m&count=1
 
 Takes `count` number of tokens from the given `:bucket` (e.g. IP address) which is replenished
 at the given `rate`. If the bucket doesn't exist, it creates one with `rate` initial number of tokens first.
@@ -40,7 +40,6 @@ Used between Patrol nodes for periodic asynchronous bucket state replication (by
 }
 ```
 
-
 ## Deployment
 
 Patrol is meant to be deployed as a side-car to edge load balancers
@@ -53,6 +52,6 @@ Lua.
 
 ## Benchmarks
 
-```
+```plaintext
 TO BE DONE
 ```
