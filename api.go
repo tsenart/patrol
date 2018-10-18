@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
-	"fmt"
 	"log"
 	"mime"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/streadway/handy/accept"
@@ -18,16 +16,15 @@ import (
 
 // API implements the Patrol service HTTP API.
 type API struct {
-	mu      sync.RWMutex
-	log     *log.Logger
-	buckets map[string]Bucket
+	log  *log.Logger
+	repo Repo
 }
 
 // NewAPI returns a new Patrol API.
-func NewAPI(l *log.Logger) *API {
+func NewAPI(l *log.Logger, repo Repo) *API {
 	return &API{
-		log:     l,
-		buckets: map[string]Bucket{},
+		log:  l,
+		repo: repo,
 	}
 }
 
@@ -56,18 +53,22 @@ func (api *API) handleBuckets(w http.ResponseWriter, r *http.Request) {
 		mt = "application/json"
 	}
 
-	var buf bytes.Buffer
+	buckets, err := api.repo.GetBuckets(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		api.log.Printf("handleBuckets: repo error: %v", err)
+		return
+	}
 
-	api.mu.RLock()
+	var buf bytes.Buffer
 	switch mt {
 	default:
 		fallthrough
 	case "application/json":
-		err = json.NewEncoder(&buf).Encode(api.buckets)
+		err = json.NewEncoder(&buf).Encode(buckets)
 	case "application/x-gob":
-		err = gob.NewEncoder(&buf).Encode(api.buckets)
+		err = gob.NewEncoder(&buf).Encode(buckets)
 	}
-	api.mu.RUnlock()
 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -82,12 +83,18 @@ func (api *API) handleBuckets(w http.ResponseWriter, r *http.Request) {
 // handler for POST /take?bucket=my-bucket-name&count=1&rate=100:1s
 func (api *API) handleTake(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+
 	name := q.Get("bucket")
+	if name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		api.log.Print("handleTake: empty bucket name")
+		return
+	}
 
 	rate, err := ParseRate(q.Get("rate"))
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, err)
+		api.log.Printf("handleTake: parse rate error: %v", err)
 		return
 	}
 
@@ -96,26 +103,23 @@ func (api *API) handleTake(w http.ResponseWriter, r *http.Request) {
 		count = 1
 	}
 
-	bucket := api.getBucket(name)
+	bucket, err := api.repo.GetBucket(r.Context(), name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		api.log.Printf("handleTake: repo.GetBucket error: %v", err)
+		return
+	}
+
 	ok := bucket.Take(time.Now(), rate, count)
-	api.updateBucket(name, bucket)
+
+	if err = api.repo.UpdateBucket(r.Context(), name, bucket); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		api.log.Printf("handleTake: repo.UpdateBucket error: %v", err)
+		return
+	}
 
 	if !ok {
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
-}
-
-func (api *API) getBucket(name string) Bucket {
-	api.mu.RLock()
-	bucket := api.buckets[name]
-	api.mu.RUnlock()
-	return bucket
-}
-
-func (api *API) updateBucket(name string, b Bucket) {
-	api.mu.Lock()
-	current := api.buckets[name]
-	api.buckets[name] = Merge(b, current)
-	api.mu.Unlock()
 }

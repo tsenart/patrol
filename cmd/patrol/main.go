@@ -19,7 +19,8 @@ func main() {
 
 func run(addr string) error {
 	lg := log.New(os.Stderr, "", log.LstdFlags)
-	api := patrol.NewAPI(lg)
+	repo := patrol.NewInMemoryRepo()
+	api := patrol.NewAPI(lg, repo)
 	srv := http.Server{
 		Addr:     addr,
 		Handler:  api.Handler(),
