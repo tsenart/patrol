@@ -48,6 +48,22 @@ Lua.
 The load balancer or reverse proxy needs to be extended so that it asks
 the side-car Patrol instance if it should pass or block a given request.
 
+### State synchronization
+
+Nodes in the cluster periodically poll other nodes for their `Buckets` and
+perform a CRDT G-Counter style merge with their `Buckets`.
+This works because a `Bucket` is internally composed of strictly monotically
+increasing counters. When merging, we simply pick the largest value for a field,
+which is determined to be the latest value across the whole cluster.
+
+#### Failure modes
+
+Under network partitions, nodes won't be able to get the latest `Buckets` from
+the other side of the partition. This means that the there may be temporary
+policy violations until the local `Bucket` gets depleted of tokens by direct requests.
+
+Once a network partition is healed, nodes should gracefully resume background synchronization.
+
 ## API
 
 ### POST /take/:bucket?rate=30:1m&count=1
