@@ -51,7 +51,7 @@ the side-car Patrol instance if it should pass or block a given request.
 ### State synchronization
 
 Nodes in the cluster periodically poll other nodes for their `Buckets` and
-perform a CRDT G-Counter style merge with their `Buckets`.
+perform a CRDT G-Counter style merge with their local `Buckets`.
 This works because a `Bucket` is internally composed of strictly monotically
 increasing counters. When merging, we simply pick the largest value for a field,
 which is determined to be the latest value across the whole cluster.
