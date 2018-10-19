@@ -2,7 +2,6 @@ package patrol
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -15,8 +14,8 @@ type Buckets map[string]Bucket
 // CRDT G-Counter semantics which allow it to be merged without
 // coordination with other Buckets.
 type Bucket struct {
-	Added uint64
-	Taken uint64
+	Added float64
+	Taken float64
 	Last  int64 // Unix nanoseconds timestamp since epoch
 }
 
@@ -57,19 +56,9 @@ func (r Rate) IsZero() bool {
 	return r.Freq == 0 || r.Per == 0
 }
 
-// Duration is a unit conversion function from the number of tokens to the duration
-// of time it takes to accumulate them at the given rate.
-func (r Rate) Duration(tokens uint64) time.Duration {
-	if r.IsZero() {
-		return time.Duration(math.MaxInt64)
-	}
-	interval := uint64(r.Per.Nanoseconds() / int64(r.Freq))
-	return time.Duration(tokens * interval)
-}
-
 // Tokens is a unit conversion function from a time duration to the number of tokens
 // which could be accumulated during that duration at the given rate.
-func (r Rate) Tokens(d time.Duration) uint64 {
+func (r Rate) Tokens(d time.Duration) float64 {
 	if r.IsZero() {
 		return 0
 	}
@@ -79,7 +68,7 @@ func (r Rate) Tokens(d time.Duration) uint64 {
 		return 0
 	}
 
-	return uint64(d / interval)
+	return float64(d) / float64(interval)
 }
 
 // Interval returns the Rate's interval between events.
@@ -89,7 +78,7 @@ func (r Rate) Interval() time.Duration {
 
 // NewBucket returns a new Bucket with the given pre-filled tokens.
 func NewBucket(tokens uint64) *Bucket {
-	return &Bucket{Added: tokens}
+	return &Bucket{Added: float64(tokens)}
 }
 
 // Take attempts to take n tokens out of the Bucket with the given capacity and
@@ -100,37 +89,26 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 		last = now
 	}
 
-	capacity := uint64(r.Freq)
-
-	// pre and post conditions:
-	//    b.Added >= b.Taken
-	//    b.Added - b.Taken <= capacity
+	// Token bucket capacity
+	capacity := float64(r.Freq)
 
 	// Calculate the current number of tokens.
 	tokens := b.Added - b.Taken
 
-	// Avoid making delta overflow below when last is very old.
-	maxElapsed := r.Duration(capacity - tokens)
-	elapsed := time.Duration(now - last)
-	if elapsed > maxElapsed {
-		elapsed = maxElapsed
-	}
-
 	// Calculate the added number of tokens due to elapsed time.
-	added := r.Tokens(elapsed)
-
-	// New number of tokens, capped at the bucket capacity.
-	newTokens := tokens + added
-
-	// Number of taken tokens, capped at newTokens.
-	taken := n
-	if ok = taken <= newTokens; !ok {
-		taken = newTokens
+	added := r.Tokens(time.Duration(now - last))
+	if missing := capacity - tokens; added > missing {
+		added = missing
 	}
 
-	b.Last = now
-	b.Added += added
-	b.Taken += taken
+	taken := float64(n)
+	if ok = taken <= tokens+added; ok {
+		b.Last = now
+		b.Added += added
+		b.Taken += taken
+	} else {
+		b.Last = last
+	}
 
 	return ok
 }
