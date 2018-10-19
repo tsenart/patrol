@@ -8,7 +8,7 @@ underneath to support CRDT semantics.
 
 ## Status
 
-This project is alpha status and is not recommended to be used in production.
+This project is **alpha status**. Don't use it in production yet.
 
 ## Installation
 
