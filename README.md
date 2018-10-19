@@ -6,6 +6,10 @@ consistent asynchronous state replication. It uses a modified version of
 the [Token Bucket](https://en.wikipedia.org/wiki/Token_bucket) algorithm
 underneath to support CRDT semantics.
 
+## Status
+
+This project is alpha status and is not recommended to be used in production.
+
 ## Installation
 
 ```console
