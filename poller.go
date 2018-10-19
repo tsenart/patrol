@@ -83,8 +83,6 @@ func (p *Poller) poll(ctx context.Context, nodes []string) {
 	for node, err := range errs {
 		p.log.Printf("poller: failed to poll %q: %v", node, err)
 	}
-
-	p.log.Printf("poller: finished polling %d nodes", len(nodes))
 }
 
 func (p *Poller) sync(ctx context.Context, node string) error {
