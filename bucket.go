@@ -121,11 +121,6 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 
 	// New number of tokens, capped at the bucket capacity.
 	newTokens := tokens + added
-	if newTokens > capacity {
-		excess := newTokens - capacity
-		added -= excess
-		newTokens = capacity
-	}
 
 	// Number of taken tokens, capped at newTokens.
 	taken := n
