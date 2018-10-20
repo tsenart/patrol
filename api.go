@@ -184,7 +184,6 @@ func (api *API) takeBucket(r *http.Request) *Response {
 		case ErrBucketNotFound:
 			api.log.Printf("Bucket %q not found in %q repo", name, rp.name)
 		default:
-			return respond(http.StatusInternalServerError, err)
 		}
 	}
 

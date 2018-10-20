@@ -60,7 +60,7 @@ func (c *Client) GetBucket(ctx context.Context, name string) (Bucket, error) {
 	rpc := call{
 		method: "GET",
 		url:    c.url("/bucket/" + name),
-		recv:   func() interface{} { return Bucket{} },
+		recv:   func() interface{} { return &Bucket{} },
 	}
 	err := c.scatter(ctx, &rpc, func(v interface{}) {
 		if other, ok := v.(*Bucket); ok {
@@ -77,7 +77,7 @@ func (c *Client) GetBuckets(ctx context.Context) (Buckets, error) {
 	rpc := call{
 		method: "GET",
 		url:    c.url("/buckets"),
-		recv:   func() interface{} { return Buckets{} },
+		recv:   func() interface{} { return &Buckets{} },
 	}
 	err := c.scatter(ctx, &rpc, func(v interface{}) {
 		if other, ok := v.(*Buckets); ok {
@@ -107,6 +107,7 @@ type call struct {
 	hdr    http.Header
 	send   interface{}
 	recv   func() interface{}
+	resp   interface{}
 	err    error
 }
 
@@ -126,7 +127,7 @@ func (c *Client) scatter(ctx context.Context, rpc *call, gather func(interface{}
 		if rpc := <-rpcs; rpc.err != nil {
 			cerr.Errors[rpc.url.Host] = rpc.err.Error()
 		} else if gather != nil {
-			gather(rpc.recv)
+			gather(rpc.resp)
 		}
 	}
 
@@ -211,7 +212,8 @@ func (c *Client) do(ctx context.Context, rpc *call) (err error) {
 	}
 
 	ct := bestContentType(res.Header.Get("Content-Type"), "")
-	return decode(ct, body, &Response{Result: rpc.recv()})
+	rpc.resp = rpc.recv()
+	return decode(ct, body, &Response{Result: rpc.resp})
 }
 
 func (Client) url(path string) *url.URL {
