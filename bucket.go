@@ -124,17 +124,17 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 // using G-counter CRDT semantics with its counters, picking
 // the largest value for each field.
 func (b *Bucket) Merge(others ...*Bucket) {
-	for _, b := range others {
-		if b.Added < b.Added {
-			b.Added = b.Added
+	for _, other := range others {
+		if b.Added < other.Added {
+			b.Added = other.Added
 		}
 
-		if b.Taken < b.Taken {
-			b.Taken = b.Taken
+		if b.Taken < other.Taken {
+			b.Taken = other.Taken
 		}
 
-		if b.Last < b.Last {
-			b.Last = b.Last
+		if b.Last < other.Last {
+			b.Last = other.Last
 		}
 	}
 }
