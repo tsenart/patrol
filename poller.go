@@ -111,5 +111,5 @@ func (p *Poller) sync(ctx context.Context, node string) error {
 		return err
 	}
 
-	return p.repo.UpdateBuckets(ctx, bs)
+	return p.repo.UpsertBuckets(ctx, bs)
 }

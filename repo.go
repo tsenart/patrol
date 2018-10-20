@@ -14,7 +14,7 @@ type Repo interface {
 	GetBuckets(ctx context.Context) (Buckets, error)
 
 	// UpsertBucket updates or inserts the bucket with the given name.
-	UpsertBucket(ctx context.Context, name string, b Bucket) error
+	UpsertBucket(ctx context.Context, name string, b *Bucket) error
 
 	// UpsertBuckets updates or inserts all the given Buckets.
 	UpsertBuckets(ctx context.Context, bs Buckets) error
@@ -63,8 +63,8 @@ func (s *InMemoryRepo) GetBuckets(context.Context) (Buckets, error) {
 }
 
 // UpsertBucket updates or inserts the bucket with the given name.
-func (s *InMemoryRepo) UpsertBucket(_ context.Context, name string, b Bucket) error {
-	s.upsert(name, &b)
+func (s *InMemoryRepo) UpsertBucket(_ context.Context, name string, b *Bucket) error {
+	s.upsert(name, b)
 	return nil
 }
 

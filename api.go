@@ -123,7 +123,7 @@ func (api *API) handleTake(w http.ResponseWriter, r *http.Request) {
 
 	ok := bucket.Take(time.Now(), rate, count)
 
-	if err = api.repo.UpdateBucket(r.Context(), name, bucket); err != nil {
+	if err = api.repo.UpsertBucket(r.Context(), name, &bucket); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		api.log.Printf("handleTake: repo.UpdateBucket error: %v", err)
 		return
