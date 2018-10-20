@@ -89,8 +89,15 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 		last = now
 	}
 
-	// Token bucket capacity
-	capacity := float64(r.Freq)
+	// Capacity is the number of tokens that can be taken out of the bucket in
+	// a single Take call, also known as burstiness. However, it *also* determines
+	// how quickly the bucket is depleted when the take rate is above the refill rate.
+	//
+	// The larger the bucket, the slower it'll be to empty it at take rates
+	// that only slightly exceed the refill rate. e.g. refill: 100/s, take: 105/s
+	// Empirically, a value of 5 results in short policy violation windows for these cases
+	// but it is also large enough to not be too sensitve to variable burstiness.
+	const capacity = float64(5)
 
 	// Calculate the current number of tokens.
 	tokens := b.Added - b.Taken
