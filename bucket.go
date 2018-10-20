@@ -8,7 +8,7 @@ import (
 )
 
 // Buckets is a map from bucket name to Bucket
-type Buckets map[string]Bucket
+type Buckets map[string]*Bucket
 
 // Bucket implements a simple Token Bucket with underlying
 // CRDT G-Counter semantics which allow it to be merged without
@@ -113,22 +113,21 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 	return ok
 }
 
-// Merge merges multiple Buckets, using G-counter CRDT semantics
-// with its counters, picking the largest values for each field.
-func Merge(bs ...Bucket) Bucket {
-	var max Bucket
-	for _, b := range bs {
-		if max.Added < b.Added {
-			max.Added = b.Added
+// Merge merges multiple Buckets into the given Bucket,
+// using G-counter CRDT semantics with its counters, picking
+// the largest value for each field.
+func (b *Bucket) Merge(others ...*Bucket) {
+	for _, b := range others {
+		if b.Added < b.Added {
+			b.Added = b.Added
 		}
 
-		if max.Taken < b.Taken {
-			max.Taken = b.Taken
+		if b.Taken < b.Taken {
+			b.Taken = b.Taken
 		}
 
-		if max.Last < b.Last {
-			max.Last = b.Last
+		if b.Last < b.Last {
+			b.Last = b.Last
 		}
 	}
-	return max
 }

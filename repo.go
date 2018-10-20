@@ -13,11 +13,11 @@ type Repo interface {
 	// GetBuckets returns all Buckets.
 	GetBuckets(ctx context.Context) (Buckets, error)
 
-	// UpdateBucket updates the bucket with the given name.
-	UpdateBucket(ctx context.Context, name string, b Bucket) error
+	// UpsertBucket updates or inserts the bucket with the given name.
+	UpsertBucket(ctx context.Context, name string, b Bucket) error
 
-	// UpdateBuckets updates all the given Buckets.
-	UpdateBuckets(ctx context.Context, bs Buckets) error
+	// UpsertBuckets updates or inserts all the given Buckets.
+	UpsertBuckets(ctx context.Context, bs Buckets) error
 }
 
 var _ Repo = (*InMemoryRepo)(nil)
@@ -31,9 +31,7 @@ type InMemoryRepo struct {
 
 // NewInMemoryRepo return a new InMemoryRepo.
 func NewInMemoryRepo() *InMemoryRepo {
-	return &InMemoryRepo{
-		buckets: map[string]Bucket{},
-	}
+	return &InMemoryRepo{buckets: Buckets{}}
 }
 
 // GetBucket gets a bucket by name.
@@ -41,13 +39,22 @@ func (s *InMemoryRepo) GetBucket(_ context.Context, name string) (Bucket, error)
 	s.mu.RLock()
 	bucket := s.buckets[name]
 	s.mu.RUnlock()
-	return bucket, nil
+
+	if bucket == nil {
+		return Bucket{}, nil
+	}
+
+	return *bucket, nil
 }
 
-// GetBuckets gets all the buckets.
+// GetBuckets gets all the buckets for read-only operations. It's not thread safe
+// to mutate any Bucket returned by this method.
+//
+// This is a memory optimization to avoid duplicating all the buckets on every
+// call to this method.
 func (s *InMemoryRepo) GetBuckets(context.Context) (Buckets, error) {
 	s.mu.RLock()
-	buckets := make(map[string]Bucket, len(s.buckets))
+	buckets := make(Buckets, len(s.buckets))
 	for name, bucket := range s.buckets {
 		buckets[name] = bucket
 	}
@@ -55,21 +62,26 @@ func (s *InMemoryRepo) GetBuckets(context.Context) (Buckets, error) {
 	return buckets, nil
 }
 
-// UpdateBucket updates the bucket with the given name.
-func (s *InMemoryRepo) UpdateBucket(_ context.Context, name string, b Bucket) error {
-	s.mu.Lock()
-	current := s.buckets[name]
-	s.buckets[name] = Merge(b, current)
-	s.mu.Unlock()
+// UpsertBucket updates or inserts the bucket with the given name.
+func (s *InMemoryRepo) UpsertBucket(_ context.Context, name string, b Bucket) error {
+	s.upsert(name, &b)
 	return nil
 }
 
-// UpdateBuckets updates all the given Buckets.
-func (s *InMemoryRepo) UpdateBuckets(_ context.Context, bs Buckets) error {
+// UpsertBuckets updates or inserts all the given Buckets.
+func (s *InMemoryRepo) UpsertBuckets(_ context.Context, bs Buckets) error {
 	for name, bucket := range bs {
-		s.mu.Lock()
-		s.buckets[name] = Merge(s.buckets[name], bucket)
-		s.mu.Unlock()
+		s.upsert(name, bucket)
 	}
 	return nil
+}
+
+func (s *InMemoryRepo) upsert(name string, b *Bucket) {
+	s.mu.Lock()
+	if current := s.buckets[name]; current == nil { // insert
+		s.buckets[name] = b
+	} else if current != b { // update
+		current.Merge(b)
+	}
+	s.mu.Unlock()
 }
