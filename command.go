@@ -2,7 +2,6 @@ package patrol
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -56,18 +55,16 @@ func (c *Command) Run(ctx context.Context) (err error) {
 		TLSHandshakeTimeout:   10 * time.Second,
 	}
 
-	client := http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-				return tr.Dial(network, addr)
-			},
-		},
+	// http2.ConfigureTransport(&tr)
+
+	doer := http.Client{
+		Transport: &tr,
 	}
 
+	client := NewClient(c.Log, &doer, cluster, c.Timeout)
 	repo := NewInMemoryRepo()
-	poller := NewPoller(c.Log, cluster, &client, repo, c.Port)
-	api := NewAPI(c.Log, repo)
+	poller := NewPoller(c.Log, client, repo)
+	api := NewAPI(c.Log, client, repo)
 
 	addr := net.JoinHostPort(c.Host, c.Port)
 	srv := http.Server{

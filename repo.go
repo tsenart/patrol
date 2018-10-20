@@ -2,6 +2,7 @@ package patrol
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -19,6 +20,9 @@ type Repo interface {
 	// UpsertBuckets updates or inserts all the given Buckets.
 	UpsertBuckets(ctx context.Context, bs Buckets) error
 }
+
+// ErrBucketNotFound is returned by GetBucket when a Bucket is missing.
+var ErrBucketNotFound = errors.New("repo: bucket not found")
 
 var _ Repo = (*InMemoryRepo)(nil)
 
@@ -41,7 +45,7 @@ func (s *InMemoryRepo) GetBucket(_ context.Context, name string) (Bucket, error)
 	s.mu.RUnlock()
 
 	if bucket == nil {
-		return Bucket{}, nil
+		return Bucket{}, ErrBucketNotFound
 	}
 
 	return *bucket, nil

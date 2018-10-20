@@ -1,14 +1,33 @@
 package patrol
 
 import (
+	"encoding/gob"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 )
 
+func init() {
+	gob.Register(Buckets{})
+	gob.Register(Bucket{})
+}
+
 // Buckets is a map from bucket name to Bucket
 type Buckets map[string]*Bucket
+
+// Merge merges all other Buckets into the receiver.
+func (bs Buckets) Merge(others ...Buckets) {
+	for _, other := range others {
+		for name, bucket := range other {
+			if b, ok := bs[name]; ok {
+				b.Merge(bucket)
+			} else {
+				bs[name] = bucket
+			}
+		}
+	}
+}
 
 // Bucket implements a simple Token Bucket with underlying
 // CRDT G-Counter semantics which allow it to be merged without
@@ -79,6 +98,11 @@ func (r Rate) Interval() time.Duration {
 // NewBucket returns a new Bucket with the given pre-filled tokens.
 func NewBucket(tokens uint64) *Bucket {
 	return &Bucket{Added: float64(tokens)}
+}
+
+// Tokens returns the number of tokens in the Bucket.
+func (b Bucket) Tokens() uint64 {
+	return uint64(b.Added - b.Taken)
 }
 
 // Take attempts to take n tokens out of the Bucket with the given capacity and

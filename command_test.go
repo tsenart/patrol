@@ -2,7 +2,6 @@ package patrol
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"os"
@@ -32,7 +31,7 @@ func TestCommand(t *testing.T) {
 			Host:     host,
 			Port:     port,
 			Cluster:  "static",
-			Interval: time.Second,
+			Interval: 50 * time.Millisecond,
 			Timeout:  30 * time.Second,
 			Nodes:    nodes,
 		}
@@ -47,7 +46,8 @@ func TestCommand(t *testing.T) {
 
 	// Integration test
 	g.Add(func() error {
-		return testCommand(logger, nodes)
+		testCommand(t, nodes)
+		return nil
 	}, func(error) {
 		// testCommand is not interruptable, it governs the run.Group
 	})
@@ -57,19 +57,19 @@ func TestCommand(t *testing.T) {
 	}
 }
 
-func testCommand(l *log.Logger, nodes []string) error {
+func testCommand(t *testing.T, nodes []string) {
 	a := vegeta.NewAttacker(vegeta.H2C(true))
 
 	targets := make([]vegeta.Target, len(nodes))
 	for i, node := range nodes {
 		targets[i] = vegeta.Target{
 			Method: "POST",
-			URL:    "http://" + node + "/take?bucket=foobar&rate=50:1s&count=1",
+			URL:    "http://" + node + "/take/foobar?rate=10:s&count=1",
 		}
 	}
 
 	tr := vegeta.NewStaticTargeter(targets...)
-	rate := vegeta.Rate{Freq: 500, Per: time.Second} // > 50 / s
+	rate := vegeta.Rate{Freq: 100, Per: time.Second} // > 10/s
 	results := a.Attack(tr, rate, 5*time.Second, "Patrol test")
 
 	var m vegeta.Metrics
@@ -79,11 +79,7 @@ func testCommand(l *log.Logger, nodes []string) error {
 
 	m.Close()
 
-	l.Printf("StatusCodes: %+v", m.StatusCodes)
-
-	if m.Success >= 0.95 {
-		return fmt.Errorf("HTTP 200s count=%f > 0.95", m.Success)
+	if m.Success > 0.9 {
+		t.Errorf("success rate should be below 0.9: got %f", m.Success)
 	}
-
-	return nil
 }

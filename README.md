@@ -109,6 +109,18 @@ Used between Patrol nodes for periodic asynchronous bucket state synchronization
   }
 ```
 
+### GET /bucket/:name
+
+Used between Patrol nodes to query the cluster for a Bucket by its name when isn't found locally on `POST /take/:bucket`.
+
+### POST /bucket/:name
+
+Used between Patrol nodes to update or insert a single bucket.
+
+### POST /buckets
+
+Used between Patrol nodes to update all the buckets of another node.
+
 ## Testing
 
 ```console
@@ -126,4 +138,3 @@ go test -v ./...
 - Structured logging.
 - Exponential back-off + circuit breaker when polling state from cluster nodes.
 - Explore alternative communication patterns for state propagation (push + Gossip)
-

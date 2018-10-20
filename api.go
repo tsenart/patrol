@@ -1,112 +1,164 @@
 package patrol
 
 import (
-	"bytes"
-	"encoding/gob"
-	"encoding/json"
+	"compress/gzip"
 	"log"
-	"mime"
 	"net/http"
 	"strconv"
 	"time"
 
 	"net/http/pprof"
 
+	"github.com/julienschmidt/httprouter"
+	"github.com/pkg/errors"
 	"github.com/streadway/handy/accept"
 	"github.com/streadway/handy/encoding"
 )
 
 // API implements the Patrol service HTTP API.
 type API struct {
-	log  *log.Logger
-	repo Repo
+	log     *log.Logger
+	local   Repo
+	cluster Repo
 }
 
 // NewAPI returns a new Patrol API.
-func NewAPI(l *log.Logger, repo Repo) *API {
+func NewAPI(l *log.Logger, cluster, local Repo) *API {
 	return &API{
-		log:  l,
-		repo: repo,
+		log:     l,
+		local:   local,
+		cluster: cluster,
 	}
+}
+
+var supportedContentTypes = []string{accept.ALL, gobMediaType, jsonMediaType}
+
+type middleware []func(http.Handler) http.Handler
+
+func (mw middleware) Wrap(h http.Handler) http.Handler {
+	wh := h
+	for _, m := range mw {
+		wh = m(wh)
+	}
+	return wh
 }
 
 // Handler returns the http.Handler of the API.
 func (api *API) Handler() http.Handler {
-	mediaTypes := []string{"application/x-gob", "application/json"}
-	handleBuckets := accept.Middleware(mediaTypes...)(
-		encoding.GzipTypes(mediaTypes, http.HandlerFunc(api.handleBuckets)))
+	mw := middleware{
+		accept.Middleware(supportedContentTypes...),
+		encoding.Gzipper(gzip.DefaultCompression, supportedContentTypes...),
+	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/buckets", handleBuckets)
-	mux.HandleFunc("/take", api.handleTake)
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	return mux
+	rt := httprouter.New()
+	for _, r := range []struct {
+		method string
+		path   string
+		handle func(*http.Request) *Response
+	}{
+		{"GET", "/buckets", api.getBuckets},
+		{"POST", "/buckets", api.upsertBuckets},
+		{"GET", "/bucket/:name", api.getBucket},
+		{"POST", "/bucket/:name", api.upsertBucket},
+		{"POST", "/take/:name", api.takeBucket},
+	} {
+		rt.Handler(r.method, r.path, mw.Wrap(api.handler(r.handle)))
+	}
+
+	rt.HandlerFunc("GET", "/debug/pprof/", pprof.Index)
+	rt.HandlerFunc("GET", "/debug/pprof/cmdline", pprof.Cmdline)
+	rt.HandlerFunc("GET", "/debug/pprof/profile", pprof.Profile)
+	rt.HandlerFunc("GET", "/debug/pprof/symbol", pprof.Symbol)
+	rt.HandlerFunc("GET", "/debug/pprof/trace", pprof.Trace)
+
+	return rt
 }
 
-// handler for GET /buckets
-func (api *API) handleBuckets(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
+// A Response that is returned as the body of all handlers.
+type Response struct {
+	Code   int         `json:"code"`
+	Result interface{} `json:"result,omitempty"`
+	Error  string      `json:"error,omitempty"`
+}
 
-	mt, _, err := mime.ParseMediaType(r.Header.Get("Accept"))
-	if err != nil {
-		mt = "application/json"
-	}
-
-	buckets, err := api.repo.GetBuckets(r.Context())
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		api.log.Printf("handleBuckets: repo error: %v", err)
-		return
-	}
-
-	var buf bytes.Buffer
-	switch mt {
+func respond(code int, result interface{}) *Response {
+	switch v := result.(type) {
+	case error:
+		return &Response{Code: code, Error: v.Error()}
 	default:
-		fallthrough
-	case "application/json":
-		err = json.NewEncoder(&buf).Encode(buckets)
-	case "application/x-gob":
-		err = gob.NewEncoder(&buf).Encode(buckets)
+		return &Response{Code: code, Result: v}
 	}
-
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		api.log.Printf("handleBuckets: encoding error: %v", err)
-		return
-	}
-
-	w.Header().Set("Content-Type", mt)
-	buf.WriteTo(w)
 }
 
-// handler for POST /take?bucket=my-bucket-name&count=1&rate=100:1s
-func (api *API) handleTake(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
+func (api *API) handler(handle func(*http.Request) *Response) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := handle(r)
+		ct := bestContentType(r.Header.Get("Accept"), jsonMediaType)
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(resp.Code)
+		if err := encode(ct, resp, w); err != nil {
+			api.log.Printf("response error: %v", err)
+		}
+	})
+}
+
+func (api *API) getBuckets(r *http.Request) *Response {
+	buckets, err := api.local.GetBuckets(r.Context())
+	if err != nil {
+		return respond(http.StatusInternalServerError, err)
 	}
+	return respond(http.StatusOK, buckets)
+}
+
+func (api *API) getBucket(r *http.Request) *Response {
+	ps := httprouter.ParamsFromContext(r.Context())
+	bucket, err := api.local.GetBucket(r.Context(), ps.ByName("name"))
+	switch err {
+	case nil:
+		return respond(http.StatusOK, bucket)
+	case ErrBucketNotFound:
+		return respond(http.StatusNotFound, err)
+	default:
+		return respond(http.StatusInternalServerError, err)
+	}
+}
+
+func (api *API) upsertBucket(r *http.Request) *Response {
+	ps := httprouter.ParamsFromContext(r.Context())
+	name := ps.ByName("name")
+	var b Bucket
+	if err := decode(r.Header.Get("Content-Type"), r.Body, &b); err != nil {
+		return respond(http.StatusBadRequest, err)
+	} else if err = api.local.UpsertBucket(r.Context(), name, &b); err != nil {
+		return respond(http.StatusInternalServerError, err)
+	}
+	return respond(http.StatusOK, nil)
+}
+
+func (api *API) upsertBuckets(r *http.Request) *Response {
+	var bs Buckets
+	if err := decode(r.Header.Get("Content-Type"), r.Body, &bs); err != nil {
+		return respond(http.StatusBadRequest, err)
+	} else if err = api.local.UpsertBuckets(r.Context(), bs); err != nil {
+		return respond(http.StatusInternalServerError, err)
+	}
+	return respond(http.StatusOK, nil)
+}
+
+// TakeResponse is returned by the takeBucket handler.
+type TakeResponse struct {
+	Taken     uint64
+	Remaining uint64
+}
+
+func (api *API) takeBucket(r *http.Request) *Response {
+	ps := httprouter.ParamsFromContext(r.Context())
+	name := ps.ByName("name")
 
 	q := r.URL.Query()
-
-	name := q.Get("bucket")
-	if name == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		api.log.Print("handleTake: empty bucket name")
-		return
-	}
-
 	rate, err := ParseRate(q.Get("rate"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		api.log.Printf("handleTake: parse rate error: %v", err)
-		return
+		return respond(http.StatusBadRequest, errors.Wrap(err, "rate"))
 	}
 
 	count, err := strconv.ParseUint(q.Get("count"), 10, 64)
@@ -114,23 +166,44 @@ func (api *API) handleTake(w http.ResponseWriter, r *http.Request) {
 		count = 1
 	}
 
-	bucket, err := api.repo.GetBucket(r.Context(), name)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		api.log.Printf("handleTake: repo.GetBucket error: %v", err)
-		return
+	var bucket *Bucket
+	for _, rp := range []struct {
+		name string
+		Repo
+	}{
+		{name: "local", Repo: api.local},
+		{name: "cluster", Repo: api.cluster},
+	} {
+		b, err := rp.GetBucket(r.Context(), name)
+		if err == nil {
+			bucket = &b
+			break
+		}
+
+		switch err {
+		case ErrBucketNotFound:
+			api.log.Printf("Bucket %q not found in %q repo", name, rp.name)
+		default:
+			return respond(http.StatusInternalServerError, err)
+		}
+	}
+
+	if bucket == nil {
+		bucket = new(Bucket)
 	}
 
 	ok := bucket.Take(time.Now(), rate, count)
 
-	if err = api.repo.UpsertBucket(r.Context(), name, &bucket); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		api.log.Printf("handleTake: repo.UpdateBucket error: %v", err)
-		return
+	if err = api.local.UpsertBucket(r.Context(), name, bucket); err != nil {
+		return respond(http.StatusInternalServerError, errors.Wrap(err, "UpsertBucket"))
 	}
 
-	if !ok {
-		w.WriteHeader(http.StatusTooManyRequests)
-		return
+	resp := &TakeResponse{Remaining: bucket.Tokens()}
+	code := http.StatusTooManyRequests
+
+	if ok {
+		code, resp.Taken = http.StatusOK, count
 	}
+
+	return respond(code, resp)
 }
