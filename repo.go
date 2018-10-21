@@ -85,7 +85,9 @@ func (s *InMemoryRepo) upsert(name string, b *Bucket) {
 	if current := s.buckets[name]; current == nil { // insert
 		s.buckets[name] = b
 	} else if current != b { // update
-		current.Merge(b)
+		var merged Bucket
+		merged.Merge(current, b)
+		s.buckets[name] = &merged
 	}
 	s.mu.Unlock()
 }

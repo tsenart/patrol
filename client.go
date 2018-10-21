@@ -103,11 +103,11 @@ func (c *Client) UpsertBuckets(ctx context.Context, bs Buckets) error {
 // an RPC call
 type call struct {
 	method string
-	url    *url.URL
+	url    url.URL
 	hdr    http.Header
 	send   interface{}
-	recv   func() interface{}
-	resp   interface{}
+	recv   func() interface{} // factory for the type to receive
+	resp   interface{}        // actual pointer to the recv'd type
 	err    error
 }
 
@@ -119,7 +119,9 @@ func (c *Client) scatter(ctx context.Context, rpc *call, gather func(interface{}
 
 	rpcs := make(chan *call, len(nodes))
 	for _, node := range nodes {
-		go c.rpc(ctx, node, rpcs, rpc)
+		// We pass rpc by value in order to copy it so that it can
+		// be used concurrently without synchronization.
+		go c.rpc(ctx, node, rpcs, *rpc)
 	}
 
 	cerr := ClientError{Errors: make(map[string]string, len(nodes))}
@@ -138,10 +140,10 @@ func (c *Client) scatter(ctx context.Context, rpc *call, gather func(interface{}
 	return nil
 }
 
-func (c *Client) rpc(ctx context.Context, node string, rpcs chan *call, rpc *call) {
+func (c *Client) rpc(ctx context.Context, node string, rpcs chan *call, rpc call) {
 	rpc.url.Host = node
-	rpc.err = c.do(ctx, rpc)
-	rpcs <- rpc
+	rpc.err = c.do(ctx, &rpc)
+	rpcs <- &rpc
 }
 
 const (
@@ -216,8 +218,8 @@ func (c *Client) do(ctx context.Context, rpc *call) (err error) {
 	return decode(ct, body, &Response{Result: rpc.resp})
 }
 
-func (Client) url(path string) *url.URL {
-	return &url.URL{Scheme: "http", Path: path}
+func (Client) url(path string) url.URL {
+	return url.URL{Scheme: "http", Path: path}
 }
 
 func bestContentType(mediaType, fallback string) string {
