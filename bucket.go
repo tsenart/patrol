@@ -21,10 +21,9 @@ func (bs Buckets) Merge(others ...Buckets) {
 	for _, other := range others {
 		for name, bucket := range other {
 			if b, ok := bs[name]; ok {
-				b.Merge(bucket)
-			} else {
-				bs[name] = bucket
+				bucket.Merge(b)
 			}
+			bs[name] = bucket
 		}
 	}
 }
@@ -149,15 +148,15 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 // the largest value for each field.
 func (b *Bucket) Merge(others ...*Bucket) {
 	for _, other := range others {
-		if b.Added < other.Added {
+		if b.Added < other.Added { // Find the maximum added
 			b.Added = other.Added
 		}
 
-		if b.Taken < other.Taken {
+		if b.Taken < other.Taken { // Find the maximum taken
 			b.Taken = other.Taken
 		}
 
-		if b.Last < other.Last {
+		if b.Last < other.Last { // Find the latest timestamp
 			b.Last = other.Last
 		}
 	}
