@@ -25,7 +25,14 @@ func NewAPI(l *log.Logger, repo Repo) *API {
 
 	rt := httprouter.New()
 	rt.HandlerFunc("POST", "/take/:name", api.takeBucket)
+
 	rt.HandlerFunc("GET", "/debug/pprof/", pprof.Index)
+	rt.HandlerFunc("GET", "/debug/pprof/allocs", pprof.Index)
+	rt.HandlerFunc("GET", "/debug/pprof/block", pprof.Index)
+	rt.HandlerFunc("GET", "/debug/pprof/goroutine", pprof.Index)
+	rt.HandlerFunc("GET", "/debug/pprof/heap", pprof.Index)
+	rt.HandlerFunc("GET", "/debug/pprof/mutex", pprof.Index)
+	rt.HandlerFunc("GET", "/debug/pprof/threadcreate", pprof.Index)
 	rt.HandlerFunc("GET", "/debug/pprof/cmdline", pprof.Cmdline)
 	rt.HandlerFunc("GET", "/debug/pprof/profile", pprof.Profile)
 	rt.HandlerFunc("GET", "/debug/pprof/symbol", pprof.Symbol)
