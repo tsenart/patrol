@@ -132,6 +132,7 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 	}
 
 	taken := float64(n)
+
 	if ok = taken <= tokens+added; ok {
 		b.Last = now
 		b.Added += added

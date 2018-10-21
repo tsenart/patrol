@@ -46,25 +46,5 @@ func (p *Poller) poll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	locals, err := p.local.GetBuckets(ctx)
-	if err != nil {
-		return err
-	}
-
-	for name, other := range others {
-		if local, ok := locals[name]; ok {
-			if other.Taken <= local.Taken {
-				continue // skip update
-			}
-			taken := other.Taken
-			*other = *local
-			other.Taken = taken
-		}
-		if err = p.local.UpsertBucket(ctx, name, other); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return p.local.UpsertBuckets(ctx, others)
 }
