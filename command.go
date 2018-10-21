@@ -56,6 +56,8 @@ func (c *Command) Run(ctx context.Context) (err error) {
 		TLSHandshakeTimeout:   10 * time.Second,
 	}
 
+	http2.ConfigureTransport(&tr)
+
 	doer := http.Client{
 		Transport: &http2.Transport{
 			AllowHTTP: true,
@@ -64,8 +66,6 @@ func (c *Command) Run(ctx context.Context) (err error) {
 			},
 		},
 	}
-
-	http2.ConfigureTransport(&tr)
 
 	client := NewClient(c.Log, &doer, cluster, c.Timeout)
 	repo := NewInMemoryRepo()
