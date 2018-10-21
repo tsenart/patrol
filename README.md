@@ -83,7 +83,7 @@ Once a network partition is healed, nodes should gracefully resume active synchr
 ### POST /take/:bucket?rate=30:1m&count=1
 
 Takes `count` number of tokens from the given `:bucket` (e.g. IP address) which is replenished
-at the given `rate`. If the bucket doesn't exist, it creates one with `rate` initial number of tokens first.
+at the given `rate`. If the bucket doesn't exist it creates one.
 
 If not enough tokens are available, an HTTP `429 Too Many Requests` response code is returned.
 Otherwise, an HTTP `200 OK` is returned.
