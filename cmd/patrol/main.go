@@ -7,28 +7,23 @@ import (
 	"net"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/tsenart/patrol"
 )
 
 func main() {
 	cmd := patrol.Command{
-		Log:      log.New(os.Stderr, "", log.LstdFlags),
-		Host:     "0.0.0.0",
-		Port:     "8080",
-		Cluster:  "static",
-		Interval: time.Second,
-		Timeout:  30 * time.Second,
+		Log:              log.New(os.Stderr, "", log.LstdFlags),
+		APIAddr:          "0.0.0.0:8080",
+		ReplicatorAddr:   "0.0.0.0:16000",
+		ClusterDiscovery: "static",
 	}
 
 	fs := flag.NewFlagSet("patrol", flag.ExitOnError)
-	fs.StringVar(&cmd.Host, "host", cmd.Host, "IP address to bind HTTP API to")
-	fs.StringVar(&cmd.Port, "port", cmd.Port, "Port to bind HTTP API to")
-	fs.StringVar(&cmd.Cluster, "cluster", cmd.Cluster, "Cluster mode [static | memberlist]")
-	fs.DurationVar(&cmd.Interval, "interval", cmd.Interval, "Poller interval")
-	fs.DurationVar(&cmd.Timeout, "timeout", cmd.Timeout, "Poller HTTP client timeout")
-	fs.Var(&nodeFlag{nodes: &cmd.Nodes}, "node", "Static node for use with -cluster=static")
+	fs.StringVar(&cmd.APIAddr, "api-addr", cmd.APIAddr, "Address to bind HTTP API to")
+	fs.StringVar(&cmd.ReplicatorAddr, "replicator-addr", cmd.ReplicatorAddr, "Address to bind replication server to")
+	fs.StringVar(&cmd.ClusterDiscovery, "cluster-discovery", cmd.ClusterDiscovery, "Cluster discovery [static]")
+	fs.Var(&nodeFlag{nodes: &cmd.ClusterNodes}, "cluster-node", "Cluster node to broadcast to")
 
 	fs.Parse(os.Args[1:])
 

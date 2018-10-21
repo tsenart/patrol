@@ -3,7 +3,6 @@ package patrol
 import (
 	"context"
 	"log"
-	"net"
 	"os"
 	"testing"
 	"time"
@@ -14,26 +13,39 @@ import (
 )
 
 func TestCommand(t *testing.T) {
-	nodes := []string{
+	ctx := context.Background()
+
+	apis := []string{
 		"127.0.0.1:12000",
 		"127.0.0.1:12001",
 		"127.0.0.1:12002",
 	}
 
-	ctx := context.Background()
+	nodes := []string{
+		"127.0.0.1:16000",
+		"127.0.0.1:16001",
+		"127.0.0.1:16002",
+	}
+
+	peers := func(node string, nodes []string) []string {
+		var peers []string
+		for i := range nodes {
+			if nodes[i] != node {
+				peers = append(peers, node)
+			}
+		}
+		return peers
+	}
 
 	var g run.Group
 	logger := log.New(os.Stderr, "", log.LstdFlags)
-	for _, node := range nodes {
-		host, port, _ := net.SplitHostPort(node)
+	for i, node := range nodes {
 		cmd := Command{
-			Log:      logger,
-			Host:     host,
-			Port:     port,
-			Cluster:  "static",
-			Interval: 50 * time.Millisecond,
-			Timeout:  30 * time.Second,
-			Nodes:    nodes,
+			Log:              logger,
+			APIAddr:          apis[i],
+			ReplicatorAddr:   node,
+			ClusterDiscovery: "static",
+			ClusterNodes:     peers(node, nodes),
 		}
 
 		ctx, cancel := context.WithCancel(ctx)

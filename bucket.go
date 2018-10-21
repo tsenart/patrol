@@ -1,40 +1,62 @@
 package patrol
 
 import (
-	"encoding/gob"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func init() {
-	gob.Register(Buckets{})
-	gob.Register(Bucket{})
-}
-
-// Buckets is a map from bucket name to Bucket
-type Buckets map[string]*Bucket
-
-// Merge merges all other Buckets into the receiver.
-func (bs Buckets) Merge(others ...Buckets) {
-	for _, other := range others {
-		for name, bucket := range other {
-			if b, ok := bs[name]; ok {
-				bucket.Merge(b)
-			}
-			bs[name] = bucket
-		}
-	}
-}
-
 // Bucket implements a simple Token Bucket with underlying
 // CRDT G-Counter semantics which allow it to be merged without
 // coordination with other Buckets.
 type Bucket struct {
+	Name  string
 	Added float64
 	Taken float64
 	Last  int64 // Unix nanoseconds timestamp since epoch
+}
+
+// ErrNameTooLarge is returns by Bucket.MarshalBinary if the name of the
+// Bucket exceeds math.MaxUint16 bytes.
+var ErrNameTooLarge = fmt.Errorf("bucket name larger than %d", math.MaxUint16)
+
+// MarshalBinary implements the encoding.BinaryMarshaler interface.
+func (b Bucket) MarshalBinary() ([]byte, error) {
+	if len(b.Name) > math.MaxUint16 {
+		return nil, ErrNameTooLarge
+	}
+
+	data := make([]byte, 26+len(b.Name))
+	binary.BigEndian.PutUint64(data, math.Float64bits(b.Added))
+	binary.BigEndian.PutUint64(data[8:], math.Float64bits(b.Taken))
+	binary.BigEndian.PutUint64(data[16:], uint64(b.Last))
+	binary.BigEndian.PutUint16(data[24:], uint16(len(b.Name)))
+	copy(data[26:], []byte(b.Name)) // TODO: Remove allocation
+
+	return data, nil
+}
+
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
+func (b *Bucket) UnmarshalBinary(data []byte) error {
+	if len(data) < 26 {
+		return io.ErrShortBuffer
+	}
+
+	b.Added = math.Float64frombits(binary.BigEndian.Uint64(data))
+	b.Taken = math.Float64frombits(binary.BigEndian.Uint64(data[8:]))
+	b.Last = int64(binary.BigEndian.Uint64(data[16:]))
+
+	nameLen := int(binary.BigEndian.Uint16(data[24:]))
+	if len(data[26:]) < nameLen {
+		return io.ErrShortBuffer
+	}
+	b.Name = string(data[26 : 26+nameLen])
+
+	return nil
 }
 
 // Rate defines the maximum frequency of some events.

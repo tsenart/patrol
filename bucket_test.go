@@ -2,9 +2,29 @@ package patrol
 
 import (
 	"testing"
+	"testing/quick"
 	"time"
 )
 
+func TestBucket_Marshaling(t *testing.T) {
+	prop := func(b Bucket) bool {
+		data, err := b.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var decoded Bucket
+		if err = decoded.UnmarshalBinary(data); err != nil {
+			t.Fatal(err)
+		}
+
+		return b == decoded
+	}
+
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1e5}); err != nil {
+		t.Fatal(err)
+	}
+}
 func TestBucket_Take(t *testing.T) {
 	rate := Rate{Freq: 60, Per: time.Second} // 60 tokens per second
 	interval := rate.Interval()

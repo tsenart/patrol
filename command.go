@@ -2,16 +2,12 @@ package patrol
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"time"
 
-	"github.com/hashicorp/memberlist"
 	"github.com/oklog/run"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -19,87 +15,64 @@ import (
 
 // A Command to be used in testing and the cmd/patrol.
 type Command struct {
-	Log      *log.Logger
-	Host     string
-	Port     string
-	Cluster  string
-	Interval time.Duration
-	Timeout  time.Duration
-	Nodes    []string
+	Log              *log.Logger
+	APIAddr          string
+	ReplicatorAddr   string
+	ClusterDiscovery string
+	ClusterNodes     []string
 }
 
 // Run runs the Command and blocks until completion.
 func (c *Command) Run(ctx context.Context) (err error) {
 	var cluster Cluster
-	switch c.Cluster {
+	switch c.ClusterDiscovery {
 	case "static":
-		cluster = NewStaticCluster(c.Nodes)
-	case "memberlist":
-		cluster, err = NewMemberlistCluster(c.Port, memberlist.DefaultLANConfig())
+		cluster = NewStaticCluster(c.ClusterNodes)
 	default:
-		err = fmt.Errorf("unsupported cluster mode: %q", c.Cluster)
+		err = fmt.Errorf("unsupported cluster discovery: %q", c.ClusterDiscovery)
 	}
 
 	if err != nil {
 		return err
 	}
 
-	dialer := net.Dialer{
-		KeepAlive: c.Interval * 2,
-		Timeout:   c.Timeout,
-	}
-
-	tr := http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		Dial:                  dialer.Dial,
-		ResponseHeaderTimeout: c.Timeout,
-		TLSHandshakeTimeout:   10 * time.Second,
-	}
-
-	http2.ConfigureTransport(&tr)
-
-	doer := http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-				return tr.Dial(network, addr)
-			},
-		},
-	}
-
-	client := NewClient(c.Log, &doer, cluster, c.Timeout)
 	repo := NewInMemoryRepo()
-	poller := NewPoller(c.Log, client, repo)
-	api := NewAPI(c.Log, client, repo)
+	replicator, err := NewReplicator(c.Log, repo, c.ReplicatorAddr)
+	if err != nil {
+		return err
+	}
 
-	addr := net.JoinHostPort(c.Host, c.Port)
+	api := NewAPI(c.Log, &BroadcastedRepo{
+		Repo:        repo,
+		Broadcaster: NewUnicaster(c.Log, cluster),
+	})
+
 	srv := http.Server{
-		Addr:     addr,
-		Handler:  h2c.NewHandler(api.Handler(), &http2.Server{}),
+		Addr:     c.APIAddr,
+		Handler:  h2c.NewHandler(api, &http2.Server{}),
 		ErrorLog: c.Log,
 	}
 
 	var g run.Group
 	{ // HTTP API
 		g.Add(func() error {
-			c.Log.Printf("Listening on %s", addr)
+			c.Log.Printf("Listening on %s", c.APIAddr)
 			return srv.ListenAndServe()
 		}, func(error) {
 			srv.Shutdown(ctx)
 		})
 	}
 
-	{ // Poller
+	{ // Replicator
 		ctx, cancel := context.WithCancel(ctx)
 		g.Add(func() error {
-			return poller.Poll(ctx, c.Interval)
+			return replicator.Start(ctx)
 		}, func(error) {
 			cancel()
 		})
 	}
 
-	// Signal handling and cancellation
-	{
+	{ // Signal handling and cancellation
 		ctx, cancel := context.WithCancel(ctx)
 		g.Add(func() error {
 			sigch := make(chan os.Signal, 1)
