@@ -11,7 +11,7 @@ import (
 )
 
 // Bucket implements a simple Token Bucket with underlying
-// CRDT G-Counter semantics which allow it to be merged without
+// CRDT PN-Counter semantics which allow it to be merged without
 // coordination with other Buckets.
 type Bucket struct {
 	Name  string
@@ -167,7 +167,7 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 }
 
 // Merge merges multiple Buckets into the given Bucket,
-// using G-counter CRDT semantics with its counters, picking
+// using PN-counter CRDT semantics with its counters, picking
 // the largest value for each field.
 func (b *Bucket) Merge(others ...*Bucket) {
 	for _, other := range others {
