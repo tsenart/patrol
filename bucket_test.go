@@ -93,7 +93,8 @@ func TestBucket_Merge(t *testing.T) {
 
 		random := buckets[rng.Int()%len(buckets)]
 		for _, bucket := range buckets {
-			random.Merge(&bucket)
+			// Explicitly test idempotence by merging the same bucket twice.
+			random.Merge(&bucket, &bucket)
 		}
 
 		if random != sequential {
