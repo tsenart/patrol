@@ -1,6 +1,7 @@
 package patrol
 
 import (
+	"math/rand"
 	"testing"
 	"testing/quick"
 	"time"
@@ -54,6 +55,53 @@ func TestBucket_Take(t *testing.T) {
 			t.Errorf(
 				"step %d\nBucket%+v:\n\tTake elapsed: %s, rate: %v, n: %d\n\t\thave (%t, %d)\n\t\twant (%t, %d)",
 				i, bucket, tc.elapsed, rate, tc.take, ok, rem, tc.ok, tc.rem,
+			)
+		}
+	}
+}
+
+func TestBucket_Merge(t *testing.T) {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	buckets := make([]Bucket, 100)
+	for i := range buckets {
+		buckets[i] = Bucket{
+			Added: rng.Float64(), // The P of the PN counter "tokens".
+			Taken: rng.Float64(), // The N of the PN counter "tokens".
+			Last:  rng.Int63(),   // A separate "last" timestamp G-Counter.
+		}
+	}
+
+	// Compute the result of a merged bucket with sequential operations.
+	var sequential Bucket
+	for _, bucket := range buckets {
+		sequential.Merge(&bucket)
+	}
+
+	// Compute multiple random sequences of merge operations and compare with
+	// the sequential result. With this, we test that the Merge operation
+	// makes the Bucket a CRDT by holding the following properties independently
+	// of merge order:
+	//
+	// - Associativity (a+(b+c)=(a+b)+c)
+	// - Commutativity (a+b=b+a)
+	// - Idempotence (a+a=a)
+	//
+	for i := 0; i < 10000; i++ { // Test 10000 random permutations of Merge order.
+		rng.Shuffle(len(buckets), func(i, j int) {
+			buckets[i], buckets[j] = buckets[j], buckets[i]
+		})
+
+		random := buckets[rng.Int()%len(buckets)]
+		for _, bucket := range buckets {
+			random.Merge(&bucket)
+		}
+
+		if random != sequential {
+			t.Fatalf(
+				"Buckets merged in random order diverged from sequential result:\nhave: %v\nwant: %v\nbuckets: %v",
+				random,
+				sequential,
+				buckets,
 			)
 		}
 	}
