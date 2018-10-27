@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
 // A Repo (repository) interface for retrieving and updating Buckets.
@@ -25,35 +26,44 @@ var _ Repo = (*InMemoryRepo)(nil)
 type InMemoryRepo struct {
 	mu      sync.RWMutex
 	buckets map[string]Bucket
+	clock   func() time.Time
 }
 
 // NewInMemoryRepo return a new InMemoryRepo.
-func NewInMemoryRepo() *InMemoryRepo {
-	return &InMemoryRepo{buckets: map[string]Bucket{}}
+func NewInMemoryRepo(clock func() time.Time) *InMemoryRepo {
+	return &InMemoryRepo{
+		buckets: map[string]Bucket{},
+		clock:   clock,
+	}
 }
 
 // GetBucket gets a bucket by name.
-func (s *InMemoryRepo) GetBucket(_ context.Context, name string) (Bucket, error) {
-	s.mu.RLock()
-	bucket, ok := s.buckets[name]
-	s.mu.RUnlock()
+func (r *InMemoryRepo) GetBucket(_ context.Context, name string) (Bucket, error) {
+	r.mu.RLock()
+	bucket, ok := r.buckets[name]
+	r.mu.RUnlock()
 
 	if !ok {
 		bucket.Name = name
+		bucket.Added = 1
+		bucket.Created = r.clock()
 	}
 
 	return bucket, nil
 }
 
 // UpsertBucket updates or inserts the bucket.
-func (s *InMemoryRepo) UpsertBucket(_ context.Context, b *Bucket) error {
-	s.mu.Lock()
-	if current, ok := s.buckets[b.Name]; !ok { // insert
-		s.buckets[b.Name] = *b
+func (r *InMemoryRepo) UpsertBucket(_ context.Context, b *Bucket) error {
+	r.mu.Lock()
+	if current, ok := r.buckets[b.Name]; !ok { // insert
+		if b.Created.IsZero() {
+			b.Created = r.clock()
+		}
+		r.buckets[b.Name] = *b
 	} else { // update
-		b.Merge(&current)
-		s.buckets[b.Name] = *b
+		current.Merge(b)
+		r.buckets[b.Name] = current
 	}
-	s.mu.Unlock()
+	r.mu.Unlock()
 	return nil
 }

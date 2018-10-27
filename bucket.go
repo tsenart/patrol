@@ -14,10 +14,16 @@ import (
 // CRDT PN-Counter semantics which allow it to be merged without
 // coordination with other Buckets.
 type Bucket struct {
-	Name  string
+	// Name of the Bucket.
+	Name string
+	// Added tokens.
 	Added float64
+	// Taken tokens.
 	Taken float64
-	Last  int64 // Unix nanoseconds timestamp since epoch
+	// Elapsed time since creation until the last successful Take.
+	Elapsed time.Duration
+	// Local created timestamp off of which all time deltas are calculated.
+	Created time.Time
 }
 
 // ErrNameTooLarge is returns by Bucket.MarshalBinary if the name of the
@@ -33,7 +39,7 @@ func (b Bucket) MarshalBinary() ([]byte, error) {
 	data := make([]byte, 26+len(b.Name))
 	binary.BigEndian.PutUint64(data, math.Float64bits(b.Added))
 	binary.BigEndian.PutUint64(data[8:], math.Float64bits(b.Taken))
-	binary.BigEndian.PutUint64(data[16:], uint64(b.Last))
+	binary.BigEndian.PutUint64(data[16:], uint64(b.Elapsed))
 	binary.BigEndian.PutUint16(data[24:], uint16(len(b.Name)))
 	copy(data[26:], []byte(b.Name)) // TODO: Remove allocation
 
@@ -48,7 +54,7 @@ func (b *Bucket) UnmarshalBinary(data []byte) error {
 
 	b.Added = math.Float64frombits(binary.BigEndian.Uint64(data))
 	b.Taken = math.Float64frombits(binary.BigEndian.Uint64(data[8:]))
-	b.Last = int64(binary.BigEndian.Uint64(data[16:]))
+	b.Elapsed = time.Duration(binary.BigEndian.Uint64(data[16:]))
 
 	nameLen := int(binary.BigEndian.Uint16(data[24:]))
 	if len(data[26:]) < nameLen {
@@ -96,6 +102,11 @@ func (r Rate) IsZero() bool {
 	return r.Freq == 0 || r.Per == 0
 }
 
+// NewBucket returns a new Bucket with the given pre-filled tokens.
+func NewBucket(tokens uint64) Bucket {
+	return Bucket{Added: float64(tokens)}
+}
+
 // Tokens is a unit conversion function from a time duration to the number of tokens
 // which could be accumulated during that duration at the given rate.
 func (r Rate) Tokens(d time.Duration) float64 {
@@ -116,21 +127,19 @@ func (r Rate) Interval() time.Duration {
 	return r.Per / time.Duration(r.Freq)
 }
 
-// NewBucket returns a new Bucket with the given pre-filled tokens.
-func NewBucket(tokens uint64) *Bucket {
-	return &Bucket{Added: float64(tokens)}
-}
-
 // Tokens returns the number of tokens in the Bucket.
 func (b Bucket) Tokens() uint64 {
 	return uint64(b.Added - b.Taken)
 }
 
-// Take attempts to take n tokens out of the Bucket with the given capacity and
-// filling Rate at time t.
-func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
-	last, now := b.Last, t.UnixNano()
-	if now < last {
+// Take attempts to take n tokens out of the Bucket with the given filling Rate at time t.
+func (b *Bucket) Take(now time.Time, r Rate, n uint64) (ok bool) {
+	if b.Created.IsZero() {
+		b.Created = now
+	}
+
+	last := b.Created.Add(b.Elapsed)
+	if now.Before(last) {
 		last = now
 	}
 
@@ -147,23 +156,24 @@ func (b *Bucket) Take(t time.Time, r Rate, n uint64) (ok bool) {
 	// Calculate the current number of tokens.
 	tokens := b.Added - b.Taken
 
+	// Calculate the elapsed time since the last successful Take.
+	elapsed := now.Sub(last)
+
 	// Calculate the added number of tokens due to elapsed time.
-	added := r.Tokens(time.Duration(now - last))
+	added := r.Tokens(elapsed)
 	if missing := capacity - tokens; added > missing {
 		added = missing
 	}
 
 	taken := float64(n)
-
-	if ok = taken <= tokens+added; ok {
-		b.Last = now
-		b.Added += added
-		b.Taken += taken
-	} else {
-		b.Last = last
+	if taken > tokens+added { // Not enough tokens.
+		return false
 	}
 
-	return ok
+	b.Elapsed += elapsed
+	b.Added += added
+	b.Taken += taken
+	return true
 }
 
 // Merge merges multiple Buckets into the given Bucket,
@@ -179,8 +189,8 @@ func (b *Bucket) Merge(others ...*Bucket) {
 			b.Taken = other.Taken
 		}
 
-		if b.Last < other.Last { // Find the latest timestamp
-			b.Last = other.Last
+		if b.Elapsed < other.Elapsed { // Find the largest elapsed time.
+			b.Elapsed = other.Elapsed
 		}
 	}
 }

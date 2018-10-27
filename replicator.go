@@ -22,7 +22,11 @@ func NewReplicator(log *log.Logger, repo Repo, addr string) (*Replicator, error)
 	if err != nil {
 		return nil, err
 	}
-	return &Replicator{log: log, repo: repo, conn: conn}, nil
+	return &Replicator{
+		log:  log,
+		repo: repo,
+		conn: conn,
+	}, nil
 }
 
 // Start satarts the replicator server, consuming and applying UDP message

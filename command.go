@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/oklog/run"
 	"golang.org/x/net/http2"
@@ -20,6 +21,8 @@ type Command struct {
 	ReplicatorAddr   string
 	ClusterDiscovery string
 	ClusterNodes     []string
+	Clock            func() time.Time // For testing
+	ShutdownTimeout  time.Duration
 }
 
 // Run runs the Command and blocks until completion.
@@ -36,13 +39,17 @@ func (c *Command) Run(ctx context.Context) (err error) {
 		return err
 	}
 
-	repo := NewInMemoryRepo()
+	if c.ShutdownTimeout == 0 {
+		return fmt.Errorf("ShutdownTimeout must be set")
+	}
+
+	repo := NewInMemoryRepo(c.Clock)
 	replicator, err := NewReplicator(c.Log, repo, c.ReplicatorAddr)
 	if err != nil {
 		return err
 	}
 
-	api := NewAPI(c.Log, &BroadcastedRepo{
+	api := NewAPI(c.Log, c.Clock, &BroadcastedRepo{
 		Repo:        repo,
 		Broadcaster: NewUnicaster(c.Log, cluster),
 	})
@@ -59,6 +66,8 @@ func (c *Command) Run(ctx context.Context) (err error) {
 			c.Log.Printf("Listening on %s", c.APIAddr)
 			return srv.ListenAndServe()
 		}, func(error) {
+			ctx, cancel := context.WithTimeout(ctx, c.ShutdownTimeout)
+			defer cancel()
 			srv.Shutdown(ctx)
 		})
 	}
