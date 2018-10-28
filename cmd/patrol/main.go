@@ -6,55 +6,70 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/tsenart/patrol"
+	"go.uber.org/zap"
 )
 
 func main() {
 	cmd := patrol.Command{
-		Log:              log.New(os.Stderr, "", log.LstdFlags),
-		APIAddr:          "0.0.0.0:8080",
-		ReplicatorAddr:   "0.0.0.0:16000",
-		ClusterDiscovery: "static",
-		ShutdownTimeout:  30 * time.Second,
+		APIAddr:         "127.0.0.1:8080",
+		NodeAddr:        "127.0.0.1:16000",
+		ShutdownTimeout: 30 * time.Second,
 	}
 
-	var offset time.Duration
+	runtime.SetMutexProfileFraction(50)
 	fs := flag.NewFlagSet("patrol", flag.ExitOnError)
-	fs.StringVar(&cmd.APIAddr, "api-addr", cmd.APIAddr, "Address to bind HTTP API to")
-	fs.StringVar(&cmd.ReplicatorAddr, "replicator-addr", cmd.ReplicatorAddr, "Address to bind replication server to")
-	fs.StringVar(&cmd.ClusterDiscovery, "cluster-discovery", cmd.ClusterDiscovery, "Cluster discovery [static]")
-	fs.DurationVar(&offset, "time-offset", 0, "Time offset to add to clock timestamps (for testing)")
-	fs.Var(&nodeFlag{nodes: &cmd.ClusterNodes}, "cluster-node", "Cluster node to broadcast to")
+	fs.StringVar(&cmd.APIAddr, "api-addr", cmd.APIAddr, "HTTP API address")
+	fs.StringVar(&cmd.NodeAddr, "node-addr", cmd.NodeAddr, "Node address")
+	fs.Var(&addrsFlag{addrs: &cmd.PeerAddrs}, "peer-addr", "Peer node address")
+
+	offset := fs.Duration("clock-offset", 0, "Offset to add to clock timestamps (for testing)")
+	logenv := fs.String("log-env", "production", "Logging environment [development | production]")
 
 	fs.Parse(os.Args[1:])
 
 	cmd.Clock = func() time.Time {
-		return time.Now().UTC().Add(offset)
+		return time.Now().UTC().Add(*offset)
+	}
+
+	var err error
+	switch *logenv {
+	case "development":
+		cmd.Log, err = zap.NewDevelopment()
+	case "production":
+		cmd.Log, err = zap.NewProduction()
+	default:
+		log.Fatalf("unspported -log-env value %q", *logenv)
+	}
+
+	if err != nil {
+		log.Fatalf("failed to create logger: %v", err)
 	}
 
 	if err := cmd.Run(context.Background()); err != nil {
-		cmd.Log.Fatal(err)
+		cmd.Log.Fatal("error", zap.Error(err))
 	}
 }
 
-// nodeFlag implements the flag.Value interface for defining node addresses.
-type nodeFlag struct{ nodes *[]string }
+// addrsFlag implements the flag.Value interface for defining addresses.
+type addrsFlag struct{ addrs *[]string }
 
-func (f *nodeFlag) Set(node string) error {
-	_, _, err := net.SplitHostPort(node)
+func (f *addrsFlag) Set(addr string) error {
+	_, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return err
 	}
-	*f.nodes = append(*f.nodes, node)
+	*f.addrs = append(*f.addrs, addr)
 	return nil
 }
 
-func (f *nodeFlag) String() string {
-	if f.nodes == nil {
+func (f *addrsFlag) String() string {
+	if f.addrs == nil {
 		return ""
 	}
-	return strings.Join(*f.nodes, ", ")
+	return strings.Join(*f.addrs, ", ")
 }

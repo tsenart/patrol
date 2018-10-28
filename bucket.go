@@ -7,23 +7,27 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"go.uber.org/zap/zapcore"
 )
 
 // Bucket implements a simple Token Bucket with underlying
 // CRDT PN-Counter semantics which allow it to be merged without
 // coordination with other Buckets.
 type Bucket struct {
-	// Name of the Bucket.
-	Name string
-	// Added tokens.
-	Added float64
-	// Taken tokens.
-	Taken float64
-	// Elapsed time since creation until the last successful Take.
-	Elapsed time.Duration
+	mu sync.RWMutex
+	// name of the Bucket.
+	name string
+	// added tokens.
+	added float64
+	// taken tokens.
+	taken float64
+	// elapsed time since creation until the last successful Take.
+	elapsed time.Duration
 	// Local created timestamp off of which all time deltas are calculated.
-	Created time.Time
+	created time.Time
 }
 
 // ErrNameTooLarge is returns by Bucket.MarshalBinary if the name of the
@@ -31,17 +35,20 @@ type Bucket struct {
 var ErrNameTooLarge = fmt.Errorf("bucket name larger than %d", math.MaxUint16)
 
 // MarshalBinary implements the encoding.BinaryMarshaler interface.
-func (b Bucket) MarshalBinary() ([]byte, error) {
-	if len(b.Name) > math.MaxUint16 {
+func (b *Bucket) MarshalBinary() ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if len(b.name) > math.MaxUint16 {
 		return nil, ErrNameTooLarge
 	}
 
-	data := make([]byte, 26+len(b.Name))
-	binary.BigEndian.PutUint64(data, math.Float64bits(b.Added))
-	binary.BigEndian.PutUint64(data[8:], math.Float64bits(b.Taken))
-	binary.BigEndian.PutUint64(data[16:], uint64(b.Elapsed))
-	binary.BigEndian.PutUint16(data[24:], uint16(len(b.Name)))
-	copy(data[26:], []byte(b.Name)) // TODO: Remove allocation
+	data := make([]byte, 26+len(b.name))
+	binary.BigEndian.PutUint64(data, math.Float64bits(b.added))
+	binary.BigEndian.PutUint64(data[8:], math.Float64bits(b.taken))
+	binary.BigEndian.PutUint64(data[16:], uint64(b.elapsed))
+	binary.BigEndian.PutUint16(data[24:], uint16(len(b.name)))
+	copy(data[26:], []byte(b.name)) // TODO: Remove allocation
 
 	return data, nil
 }
@@ -52,15 +59,18 @@ func (b *Bucket) UnmarshalBinary(data []byte) error {
 		return io.ErrShortBuffer
 	}
 
-	b.Added = math.Float64frombits(binary.BigEndian.Uint64(data))
-	b.Taken = math.Float64frombits(binary.BigEndian.Uint64(data[8:]))
-	b.Elapsed = time.Duration(binary.BigEndian.Uint64(data[16:]))
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.added = math.Float64frombits(binary.BigEndian.Uint64(data))
+	b.taken = math.Float64frombits(binary.BigEndian.Uint64(data[8:]))
+	b.elapsed = time.Duration(binary.BigEndian.Uint64(data[16:]))
 
 	nameLen := int(binary.BigEndian.Uint16(data[24:]))
 	if len(data[26:]) < nameLen {
 		return io.ErrShortBuffer
 	}
-	b.Name = string(data[26 : 26+nameLen])
+	b.name = string(data[26 : 26+nameLen])
 
 	return nil
 }
@@ -104,7 +114,7 @@ func (r Rate) IsZero() bool {
 
 // NewBucket returns a new Bucket with the given pre-filled tokens.
 func NewBucket(tokens uint64) Bucket {
-	return Bucket{Added: float64(tokens)}
+	return Bucket{added: float64(tokens)}
 }
 
 // Tokens is a unit conversion function from a time duration to the number of tokens
@@ -127,34 +137,60 @@ func (r Rate) Interval() time.Duration {
 	return r.Per / time.Duration(r.Freq)
 }
 
+// String implements the Stringer interface.
+func (r Rate) String() string {
+	return strconv.Itoa(r.Freq) + ":" + r.Per.String()
+}
+
 // Tokens returns the number of tokens in the Bucket.
-func (b Bucket) Tokens() uint64 {
-	return uint64(b.Added - b.Taken)
+func (b *Bucket) Tokens() uint64 {
+	b.mu.RLock()
+	tokens := uint64(b.added - b.taken)
+	b.mu.RUnlock()
+	return tokens
+}
+
+// IsZero returns true if the Bucket's fields are zero valued
+// (apart from the Name and Created timestamp).
+func (b *Bucket) IsZero() bool {
+	b.mu.RLock()
+	zero := b.added == 0 && b.taken == 0 && b.elapsed == 0
+	b.mu.RUnlock()
+	return zero
+}
+
+// MarshalLogObject implements the zap.ObjectMarshaler interface
+func (b *Bucket) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	enc.AddString("name", b.name)
+	enc.AddFloat64("added", b.added)
+	enc.AddFloat64("taken", b.taken)
+	enc.AddDuration("elapsed", b.elapsed)
+	enc.AddTime("created", b.created)
+	return nil
 }
 
 // Take attempts to take n tokens out of the Bucket with the given filling Rate at time t.
 func (b *Bucket) Take(now time.Time, r Rate, n uint64) (ok bool) {
-	if b.Created.IsZero() {
-		b.Created = now
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.created.IsZero() {
+		b.created = now
 	}
 
-	last := b.Created.Add(b.Elapsed)
+	last := b.created.Add(b.elapsed)
 	if now.Before(last) {
 		last = now
 	}
 
 	// Capacity is the number of tokens that can be taken out of the bucket in
-	// a single Take call, also known as burstiness. However, it *also* determines
-	// how quickly the bucket is depleted when the take rate is above the refill rate.
-	//
-	// The larger the bucket, the slower it'll be to empty it at take rates
-	// that only slightly exceed the refill rate. e.g. refill: 100/s, take: 105/s
-	// Empirically, a value of 5 results in short policy violation windows for these cases
-	// but it is also large enough to not be too sensitve to variable burstiness.
-	const capacity = float64(5)
+	// a single Take call, also known as burstiness.
+	capacity := float64(r.Freq)
 
 	// Calculate the current number of tokens.
-	tokens := b.Added - b.Taken
+	tokens := b.added - b.taken
 
 	// Calculate the elapsed time since the last successful Take.
 	elapsed := now.Sub(last)
@@ -170,27 +206,35 @@ func (b *Bucket) Take(now time.Time, r Rate, n uint64) (ok bool) {
 		return false
 	}
 
-	b.Elapsed += elapsed
-	b.Added += added
-	b.Taken += taken
+	b.elapsed += elapsed
+	b.added += added
+	b.taken += taken
 	return true
 }
 
-// Merge merges multiple Buckets into the given Bucket,
-// using PN-counter CRDT semantics with its counters, picking
-// the largest value for each field.
+// Merge merges multiple Buckets using PN-counter CRDT semantics with
+// its counters, picking the largest value for each field.
 func (b *Bucket) Merge(others ...*Bucket) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	for _, other := range others {
-		if b.Added < other.Added { // Find the maximum added
-			b.Added = other.Added
+		if other == b {
+			continue
 		}
 
-		if b.Taken < other.Taken { // Find the maximum taken
-			b.Taken = other.Taken
+		other.mu.RLock()
+		if b.added < other.added { // Find the maximum added
+			b.added = other.added
 		}
 
-		if b.Elapsed < other.Elapsed { // Find the largest elapsed time.
-			b.Elapsed = other.Elapsed
+		if b.taken < other.taken { // Find the maximum taken
+			b.taken = other.taken
 		}
+
+		if b.elapsed < other.elapsed { // Find the largest elapsed time.
+			b.elapsed = other.elapsed
+		}
+		other.mu.RUnlock()
 	}
 }

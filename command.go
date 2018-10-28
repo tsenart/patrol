@@ -3,67 +3,50 @@ package patrol
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"time"
 
 	"github.com/oklog/run"
+	"go.uber.org/zap"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
 
 // A Command to be used in testing and the cmd/patrol.
 type Command struct {
-	Log              *log.Logger
-	APIAddr          string
-	ReplicatorAddr   string
-	ClusterDiscovery string
-	ClusterNodes     []string
-	Clock            func() time.Time // For testing
-	ShutdownTimeout  time.Duration
+	Log             *zap.Logger
+	APIAddr         string
+	NodeAddr        string
+	PeerAddrs       []string
+	Clock           func() time.Time // For testing
+	ShutdownTimeout time.Duration
 }
 
 // Run runs the Command and blocks until completion.
 func (c *Command) Run(ctx context.Context) (err error) {
-	var cluster Cluster
-	switch c.ClusterDiscovery {
-	case "static":
-		cluster = NewStaticCluster(c.ClusterNodes)
-	default:
-		err = fmt.Errorf("unsupported cluster discovery: %q", c.ClusterDiscovery)
-	}
-
-	if err != nil {
-		return err
-	}
-
 	if c.ShutdownTimeout == 0 {
 		return fmt.Errorf("ShutdownTimeout must be set")
 	}
 
-	repo := NewInMemoryRepo(c.Clock)
-	replicator, err := NewReplicator(c.Log, repo, c.ReplicatorAddr)
+	repo, err := NewRepo(c.Log, c.Clock, c.NodeAddr, c.PeerAddrs)
 	if err != nil {
 		return err
 	}
 
-	api := NewAPI(c.Log, c.Clock, &BroadcastedRepo{
-		Repo:        repo,
-		Broadcaster: NewUnicaster(c.Log, cluster),
-	})
+	defer c.Log.Sync()
+	api := NewAPI(c.Log, c.Clock, repo)
 
 	srv := http.Server{
-		Addr:     c.APIAddr,
-		Handler:  h2c.NewHandler(api, &http2.Server{}),
-		ErrorLog: c.Log,
+		Addr:    c.APIAddr,
+		Handler: h2c.NewHandler(api, &http2.Server{}),
 	}
 
 	var g run.Group
 	{ // HTTP API
 		g.Add(func() error {
-			c.Log.Printf("Listening on %s", c.APIAddr)
+			c.Log.Info("API serving", zap.String("addr", c.APIAddr))
 			return srv.ListenAndServe()
 		}, func(error) {
 			ctx, cancel := context.WithTimeout(ctx, c.ShutdownTimeout)
@@ -72,10 +55,10 @@ func (c *Command) Run(ctx context.Context) (err error) {
 		})
 	}
 
-	{ // Replicator
+	{ // Replication
 		ctx, cancel := context.WithCancel(ctx)
 		g.Add(func() error {
-			return replicator.Start(ctx)
+			return repo.Receive(ctx)
 		}, func(error) {
 			cancel()
 		})

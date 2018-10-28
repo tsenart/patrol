@@ -1,7 +1,6 @@
 package patrol
 
 import (
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,18 +9,19 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 // API implements the Patrol service HTTP API.
 type API struct {
-	log   *log.Logger
+	log   *zap.Logger
 	clock func() time.Time
-	repo  Repo
+	repo  *Repo
 	http.Handler
 }
 
 // NewAPI returns a new Patrol API.
-func NewAPI(l *log.Logger, clock func() time.Time, repo Repo) *API {
+func NewAPI(l *zap.Logger, clock func() time.Time, repo *Repo) *API {
 	api := API{log: l, clock: clock, repo: repo}
 
 	rt := httprouter.New()
@@ -45,7 +45,7 @@ func NewAPI(l *log.Logger, clock func() time.Time, repo Repo) *API {
 
 func (api *API) error(w http.ResponseWriter, code int, err error) {
 	w.WriteHeader(code)
-	api.log.Print(err.Error())
+	api.log.Error("api error", zap.Error(err))
 }
 
 func (api *API) takeBucket(w http.ResponseWriter, r *http.Request) {
@@ -64,20 +64,25 @@ func (api *API) takeBucket(w http.ResponseWriter, r *http.Request) {
 		count = 1
 	}
 
-	bucket, err := api.repo.GetBucket(r.Context(), name)
-	if err != nil && err != ErrBucketNotFound {
-		api.error(w, http.StatusBadRequest, err)
-		return
-	}
-
+	bucket, _ := api.repo.Bucket(r.Context(), name, rate.Freq)
 	code := http.StatusOK
 	if !bucket.Take(api.clock(), rate, count) {
 		code = http.StatusTooManyRequests
 	}
 
-	if err = api.repo.UpsertBucket(r.Context(), &bucket); err != nil {
-		api.error(w, http.StatusInternalServerError, err)
-		return
+	api.log.Debug(
+		"take",
+		zap.Int("code", code),
+		zap.Uint64("count", count),
+		zap.Stringer("rate", rate),
+		zap.Object("bucket", bucket),
+	)
+
+	if code == http.StatusOK {
+		if err = api.repo.Broadcast(bucket); err != nil {
+			api.error(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	w.WriteHeader(code)

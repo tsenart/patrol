@@ -2,14 +2,12 @@ package patrol
 
 import (
 	"context"
-	"log"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/tsenart/vegeta/lib"
-
 	"github.com/oklog/run"
+	"github.com/tsenart/vegeta/lib"
+	"go.uber.org/zap"
 )
 
 func TestCommand(t *testing.T) {
@@ -38,15 +36,18 @@ func TestCommand(t *testing.T) {
 	}
 
 	var g run.Group
-	logger := log.New(os.Stderr, "", log.LstdFlags)
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for i, node := range nodes {
 		offset := time.Duration(i) * time.Minute
 		cmd := Command{
-			Log:              logger,
-			APIAddr:          apis[i],
-			ReplicatorAddr:   node,
-			ClusterDiscovery: "static",
-			ClusterNodes:     peers(node, nodes),
+			Log:       logger,
+			APIAddr:   apis[i],
+			NodeAddr:  node,
+			PeerAddrs: peers(node, nodes),
 			Clock: func() time.Time {
 				// Test that unsynchronized clocks don't affect results.
 				return time.Now().UTC().Add(offset)

@@ -10,10 +10,10 @@ import (
 func TestBucket_Marshaling(t *testing.T) {
 	prop := func(name string, added, taken float64, elapsed time.Duration) bool {
 		b := Bucket{
-			Name:    name,
-			Added:   added,
-			Taken:   taken,
-			Elapsed: elapsed,
+			name:    name,
+			added:   added,
+			taken:   taken,
+			elapsed: elapsed,
 		}
 		data, err := b.MarshalBinary()
 		if err != nil {
@@ -56,11 +56,11 @@ func TestBucket_Take(t *testing.T) {
 	} {
 		now = now.Add(tc.elapsed)
 		ok := bucket.Take(now, rate, tc.take)
-		rem := uint64(bucket.Added - bucket.Taken)
+		rem := uint64(bucket.added - bucket.taken)
 		if ok != tc.ok || rem != tc.rem {
 			t.Errorf(
 				"step %d\nBucket%+v:\n\tTake elapsed: %s, rate: %v, n: %d\n\t\thave (%t, %d)\n\t\twant (%t, %d)",
-				i, bucket, tc.elapsed, rate, tc.take, ok, rem, tc.ok, tc.rem,
+				i, &bucket, tc.elapsed, rate, tc.take, ok, rem, tc.ok, tc.rem,
 			)
 		}
 	}
@@ -68,19 +68,19 @@ func TestBucket_Take(t *testing.T) {
 
 func TestBucket_Merge(t *testing.T) {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	buckets := make([]Bucket, 100)
+	buckets := make([]*Bucket, 100)
 	for i := range buckets {
-		buckets[i] = Bucket{
-			Added:   rng.Float64(),              // The P of the PN counter "tokens".
-			Taken:   rng.Float64(),              // The N of the PN counter "tokens".
-			Elapsed: time.Duration(rng.Int63()), // A separate "elapsed" duration G-Counter.
+		buckets[i] = &Bucket{
+			added:   rng.Float64(),              // The P of the PN counter "tokens".
+			taken:   rng.Float64(),              // The N of the PN counter "tokens".
+			elapsed: time.Duration(rng.Int63()), // A separate "elapsed" duration G-Counter.
 		}
 	}
 
 	// Compute the result of a merged bucket with sequential operations.
 	var sequential Bucket
 	for _, bucket := range buckets {
-		sequential.Merge(&bucket)
+		sequential.Merge(&sequential, bucket)
 	}
 
 	// Compute multiple random sequences of merge operations and compare with
@@ -100,14 +100,14 @@ func TestBucket_Merge(t *testing.T) {
 		random := buckets[rng.Int()%len(buckets)]
 		for _, bucket := range buckets {
 			// Explicitly test idempotence by merging the same bucket twice.
-			random.Merge(&bucket, &bucket)
+			random.Merge(bucket, bucket)
 		}
 
-		if random != sequential {
+		if *random != sequential {
 			t.Fatalf(
 				"Buckets merged in random order diverged from sequential result:\nhave: %v\nwant: %v\nbuckets: %v",
 				random,
-				sequential,
+				&sequential,
 				buckets,
 			)
 		}
