@@ -8,7 +8,13 @@ import (
 )
 
 func TestBucket_Marshaling(t *testing.T) {
-	prop := func(b Bucket) bool {
+	prop := func(name string, added, taken float64, elapsed time.Duration) bool {
+		b := Bucket{
+			Name:    name,
+			Added:   added,
+			Taken:   taken,
+			Elapsed: elapsed,
+		}
 		data, err := b.MarshalBinary()
 		if err != nil {
 			t.Fatal(err)
@@ -29,7 +35,7 @@ func TestBucket_Marshaling(t *testing.T) {
 func TestBucket_Take(t *testing.T) {
 	rate := Rate{Freq: 60, Per: time.Second} // 60 tokens per second
 	interval := rate.Interval()
-	bucket := NewBucket(60)
+	bucket := NewBucket(5) // 5 initial tokens
 	now := time.Unix(0, 0)
 
 	// Test successive takes from the same bucket.
@@ -65,9 +71,9 @@ func TestBucket_Merge(t *testing.T) {
 	buckets := make([]Bucket, 100)
 	for i := range buckets {
 		buckets[i] = Bucket{
-			Added: rng.Float64(), // The P of the PN counter "tokens".
-			Taken: rng.Float64(), // The N of the PN counter "tokens".
-			Last:  rng.Int63(),   // A separate "last" timestamp G-Counter.
+			Added:   rng.Float64(),              // The P of the PN counter "tokens".
+			Taken:   rng.Float64(),              // The N of the PN counter "tokens".
+			Elapsed: time.Duration(rng.Int63()), // A separate "elapsed" duration G-Counter.
 		}
 	}
 

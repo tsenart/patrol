@@ -40,12 +40,18 @@ func TestCommand(t *testing.T) {
 	var g run.Group
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	for i, node := range nodes {
+		offset := time.Duration(i) * time.Minute
 		cmd := Command{
 			Log:              logger,
 			APIAddr:          apis[i],
 			ReplicatorAddr:   node,
 			ClusterDiscovery: "static",
 			ClusterNodes:     peers(node, nodes),
+			Clock: func() time.Time {
+				// Test that unsynchronized clocks don't affect results.
+				return time.Now().UTC().Add(offset)
+			},
+			ShutdownTimeout: 5 * time.Second,
 		}
 
 		ctx, cancel := context.WithCancel(ctx)
@@ -58,7 +64,7 @@ func TestCommand(t *testing.T) {
 
 	// Integration test
 	g.Add(func() error {
-		testCommand(t, nodes)
+		testCommand(t, apis)
 		return nil
 	}, func(error) {
 		// testCommand is not interruptable, it governs the run.Group
@@ -79,6 +85,9 @@ func testCommand(t *testing.T, nodes []string) {
 			URL:    "http://" + node + "/take/foobar?rate=10:s&count=1",
 		}
 	}
+
+	// Wait until APIs are serving.
+	time.Sleep(time.Second)
 
 	tr := vegeta.NewStaticTargeter(targets...)
 	rate := vegeta.Rate{Freq: 100, Per: time.Second} // > 10/s

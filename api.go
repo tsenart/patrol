@@ -14,14 +14,15 @@ import (
 
 // API implements the Patrol service HTTP API.
 type API struct {
-	log  *log.Logger
-	repo Repo
+	log   *log.Logger
+	clock func() time.Time
+	repo  Repo
 	http.Handler
 }
 
 // NewAPI returns a new Patrol API.
-func NewAPI(l *log.Logger, repo Repo) *API {
-	api := API{log: l, repo: repo}
+func NewAPI(l *log.Logger, clock func() time.Time, repo Repo) *API {
+	api := API{log: l, clock: clock, repo: repo}
 
 	rt := httprouter.New()
 	rt.HandlerFunc("POST", "/take/:name", api.takeBucket)
@@ -70,7 +71,7 @@ func (api *API) takeBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code := http.StatusOK
-	if !bucket.Take(time.Now(), rate, count) {
+	if !bucket.Take(api.clock(), rate, count) {
 		code = http.StatusTooManyRequests
 	}
 

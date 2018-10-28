@@ -10,26 +10,6 @@ underneath to support CRDT PN-Counter semantics.
 
 This project is **alpha status**. Don't use it in production yet.
 
-## Installation
-
-```console
-go get github.com/tsenart/patrol
-```
-
-## Usage
-
-```console
-Usage of patrol:
-  -api-addr string
-    	Address to bind HTTP API to (default "0.0.0.0:8080")
-  -cluster-discovery string
-    	Cluster discovery [static] (default "static")
-  -cluster-node value
-    	Cluster node to broadcast to
-  -replicator-addr string
-    	Address to bind replication server to (default "0.0.0.0:16000")
-```
-
 ## Design
 
 Patrol is designed to be:
@@ -38,6 +18,12 @@ Patrol is designed to be:
 - Operator friendly: Simple API and small configuration surface area.
 - Performant: Minimal overhead, high concurrency support.
 - Fault tolerant: Eventually consistent, best-effort state synchronization between cluster nodes.
+
+## Installation
+
+```console
+go get github.com/tsenart/patrol/cmd/...
+```
 
 ## Deployment
 
@@ -50,7 +36,7 @@ Lua.
 The load balancer or reverse proxy needs to be extended so that it asks
 the side-car Patrol instance if it should pass or block a given request.
 
-### State synchronization
+### Replication
 
 Nodes in the cluster actively replicate state to all other nodes via UDP
 unicast broadcasting. One message is sent to each cluster node per `Bucket`
@@ -59,6 +45,33 @@ take operation that is triggered via the HTTP API.
 The full `Bucket` state is replicated which fits in less than 256 bytes.
 Together with its merge semantics, this makes a `Bucket` a **state based**
 *Convergent Replicated Data Type* (CvRDT) based on a [PN-Counter](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type#PN-Counter_(Positive-Negative_Counter)).
+
+### Clock synchronization
+
+While the sort of rate limiting supported by Patrol is time based (e.g 100 requests **per minute**),
+it **does not** depend on node clocks to be synchronized (e.g via `ntpd`).
+
+A `Bucket` stores the local time when it was created in a given node as well as a relative
+elapsed duration which represents how much the `Bucket` has advanced in time via successful `Takes`.
+Only the elapsed duration is replicated to other nodes and merged with CRDT G-Counter semantics;
+this value is global across the cluster, but is added to the local, per Bucket `Created` timestamp
+to calculate time deltas between successive `Take` operations and, hence, the number of tokens to
+refill over time.
+
+By keeping the `Created` timestamps local and using only relative time arithmetic, we avoid the
+need to synchronize clocks across the cluster.
+
+### Consistency, Availability, Partition-Tolerance (CAP)
+
+Under a network partition, nodes won't be able to actively replicate `Bucket` state to nodes on
+other sides of the partition. The effect of this is that a `Bucket`'s global rate limit
+will be multiplied by the number of sides in a partition and will lead to temporary policy
+violations until the partition heals; in other words, Patrol fails-open under netsplits.
+
+This is a choice of *Availability* over *Consistency*: *AP* in the CAP theorem.
+
+In the future, it might be interesting to make this trade-off configurable and to instead fail
+close under network partitions.
 
 ### Cluster discovery
 
@@ -69,14 +82,6 @@ should be specified with multiple `-cluster-node` flags.
 
 A config management tool like Ansible is recommended to automate the provisioning
 of the OS service scripts with this configuration pre-populated.
-
-### Failure modes
-
-Under network partitions, nodes won't be able to get the latest `Buckets` from
-the other side of the partition. This means that the there may be temporary
-policy violations until the local `Bucket` gets depleted of tokens by direct requests.
-
-Once a network partition is healed, nodes should gracefully resume active synchronization.
 
 ## API
 
