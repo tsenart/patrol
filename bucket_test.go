@@ -33,7 +33,7 @@ func TestBucket_Marshaling(t *testing.T) {
 	}
 }
 func TestBucket_Take(t *testing.T) {
-	rate := Rate{Freq: 60, Per: time.Second} // 60 tokens per second
+	rate := Rate{Freq: 5, Per: time.Second} // 60 tokens per second
 	interval := rate.Interval()
 	bucket := NewBucket(5) // 5 initial tokens
 	now := time.Unix(0, 0)
