@@ -50,9 +50,9 @@ var ErrNameTooLarge = fmt.Errorf("bucket name larger than %d", maxBucketNameLeng
 // MarshalBinary implements the encoding.BinaryMarshaler interface.
 func (b *Bucket) MarshalBinary() ([]byte, error) {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
 
 	if len(b.name) > maxBucketNameLength {
+		b.mu.RUnlock()
 		return nil, ErrNameTooLarge
 	}
 
@@ -62,6 +62,7 @@ func (b *Bucket) MarshalBinary() ([]byte, error) {
 	binary.BigEndian.PutUint64(data[16:], uint64(b.elapsed))
 	data[24] = byte(len(b.name))
 	copy(data[25:], *(*[]byte)(unsafe.Pointer(&b.name)))
+	b.mu.RUnlock()
 
 	return data, nil
 }
@@ -73,7 +74,6 @@ func (b *Bucket) UnmarshalBinary(data []byte) error {
 	}
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
 	b.added = math.Float64frombits(binary.BigEndian.Uint64(data))
 	b.taken = math.Float64frombits(binary.BigEndian.Uint64(data[8:]))
@@ -81,10 +81,12 @@ func (b *Bucket) UnmarshalBinary(data []byte) error {
 
 	nameLen := int(byte(data[24]))
 	if len(data[25:]) < nameLen {
+		b.mu.Unlock()
 		return io.ErrShortBuffer
 	}
 	b.name = string(data[25 : 25+nameLen])
 
+	b.mu.Unlock()
 	return nil
 }
 
