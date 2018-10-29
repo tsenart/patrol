@@ -30,7 +30,7 @@ func (c *Command) Run(ctx context.Context) (err error) {
 		return fmt.Errorf("ShutdownTimeout must be set")
 	}
 
-	repo, err := NewRepo(c.Log, c.Clock, c.NodeAddr, c.PeerAddrs)
+	repo, err := NewReplicatedRepo(c.Log, NewLocalRepo(c.Clock), c.NodeAddr, c.PeerAddrs)
 	if err != nil {
 		return err
 	}

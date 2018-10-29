@@ -2,7 +2,6 @@ package patrol
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -11,19 +10,24 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// A Repo stores, retrieves and replicates Buckets across the cluster.
-type Repo struct {
+// A Repo creates Buckets and allows for them to be retrieved later.
+// Implementations must be safe for concurrent use.
+type Repo interface {
+	GetBucket(ctx context.Context, name string) (*Bucket, bool)
+	UpsertBucket(ctx context.Context, b *Bucket) (merged *Bucket, created bool)
+}
+
+// A ReplicatedRepo stores, retrieves and replicates Buckets across the cluster.
+type ReplicatedRepo struct {
 	log     *zap.Logger
 	peers   []string
 	conn    net.PacketConn
-	clock   func() time.Time
-	mu      sync.RWMutex
-	buckets map[string]*Bucket
+	repo    Repo
 	incasts singleflight.Group
 }
 
-// NewRepo returns a new Repo that receives and sends UDP packets from the given addr to all peers.
-func NewRepo(log *zap.Logger, clock func() time.Time, addr string, peers []string) (*Repo, error) {
+// NewReplicatedRepo returns a new Repo that receives and sends UDP packets from the given addr to all peers.
+func NewReplicatedRepo(log *zap.Logger, r Repo, addr string, peers []string) (*ReplicatedRepo, error) {
 	conn, err := net.ListenPacket("udp", addr)
 	if err != nil {
 		return nil, err
@@ -38,18 +42,19 @@ func NewRepo(log *zap.Logger, clock func() time.Time, addr string, peers []strin
 
 	log.Debug("peers", zap.String("self", addr), zap.Strings("others", addrs))
 
-	return &Repo{
-		log:     log,
-		peers:   addrs,
-		conn:    conn,
-		clock:   clock,
-		buckets: map[string]*Bucket{},
+	return &ReplicatedRepo{
+		log:   log,
+		peers: addrs,
+		conn:  conn,
+		repo:  r,
 	}, nil
 }
 
 // Receive starts receiving and applying Bucket state updates from other peers.
-func (r *Repo) Receive(ctx context.Context) error {
-	buf := make([]byte, 256)
+func (r *ReplicatedRepo) Receive(ctx context.Context) error {
+
+	var remote Bucket
+	buf := make([]byte, bucketPacketSize)
 	for {
 		select {
 		case <-ctx.Done():
@@ -57,7 +62,7 @@ func (r *Repo) Receive(ctx context.Context) error {
 		default:
 		}
 
-		remote, addr, err := r.receive(buf)
+		addr, err := r.receive(&remote, buf)
 		switch e := err.(type) {
 		case nil:
 		case net.Error:
@@ -68,35 +73,31 @@ func (r *Repo) Receive(ctx context.Context) error {
 			return err
 		}
 
-		r.log.Debug("received", zap.Stringer("peer", addr), zap.Object("bucket", remote))
+		r.log.Debug("received", zap.Stringer("peer", addr), zap.Object("bucket", &remote))
 
-		local, ok := r.bucket(remote.name, 0)
-		local.Merge(remote)
-
-		r.log.Debug("merged",
-			zap.Stringer("peer", addr),
-			zap.Object("remote", remote),
-			zap.Object("local", local),
-		)
-
-		if ok && remote.IsZero() && !local.IsZero() {
-			// Node is in-casting this Bucket's state. Send it over.
+		if local, ok := r.repo.GetBucket(ctx, remote.name); !remote.IsZero() {
+			local.Merge(&remote)
+			r.log.Debug("upsert",
+				zap.Stringer("peer", addr),
+				zap.Bool("created", !ok),
+				zap.Object("remote", &remote),
+				zap.Object("local", local),
+			)
+		} else if ok && !local.IsZero() { // Incast request
 			if err = r.unicast(local, addr); err != nil {
-				return fmt.Errorf("unicasting %q to %s failed: %v", local.name, addr, err)
+				r.log.Error("unicast failed", zap.Object("bucket", local), zap.Stringer("peer", addr))
 			}
 		}
 	}
 }
 
-// Bucket gets a Bucket by its name from the local Repo. It creates one with
-// the given initial tokens if doesn't exist.
-func (r *Repo) Bucket(ctx context.Context, name string, tokens int) (*Bucket, bool) {
-	b, ok := r.bucket(name, tokens)
+// GetBucket gets a Bucket by its name from the local Repo. It creates if it doesn't exist,
+// asking the cluster to send their most up to date version of the Bucket asynchronously.
+func (r *ReplicatedRepo) GetBucket(ctx context.Context, name string) (*Bucket, bool) {
+	b, ok := r.repo.GetBucket(ctx, name)
 	if !ok {
 		r.incasts.Do(b.name, func() (interface{}, error) {
-			if err := r.Broadcast(&Bucket{name: name}); err != nil {
-				r.log.Debug("incast failed", zap.String("bucket", name), zap.Error(err))
-			}
+			r.broadcast(&Bucket{name: name})
 			return nil, nil
 		})
 	}
@@ -104,40 +105,33 @@ func (r *Repo) Bucket(ctx context.Context, name string, tokens int) (*Bucket, bo
 	return b, ok
 }
 
-func (r *Repo) bucket(name string, tokens int) (*Bucket, bool) {
-	r.mu.Lock()
-	b, ok := r.buckets[name]
-	if !ok {
-		b = &Bucket{name: name, added: float64(tokens)}
-		r.buckets[name] = b
-	}
-	r.mu.Unlock()
-	return b, ok
-}
-
-func (r *Repo) receive(buf []byte) (*Bucket, net.Addr, error) {
+func (r *ReplicatedRepo) receive(b *Bucket, buf []byte) (net.Addr, error) {
 	err := r.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	n, addr, err := r.conn.ReadFrom(buf)
 	if err != nil {
-		return nil, addr, err
+		return addr, err
 	}
 
-	var b Bucket
-	err = b.UnmarshalBinary(buf[:n])
-	return &b, addr, err
+	return addr, b.UnmarshalBinary(buf[:n])
 }
 
-// Broadcast broadcasts the given Bucket to all peers.
-func (r *Repo) Broadcast(b *Bucket) error {
+// UpsertBucket upserts the given Bucket and broadcasts to all nodes in the cluster.
+func (r *ReplicatedRepo) UpsertBucket(ctx context.Context, b *Bucket) (upserted *Bucket, ok bool) {
+	upserted, ok = r.repo.UpsertBucket(ctx, b)
+	r.broadcast(upserted)
+	return upserted, ok
+}
+
+func (r *ReplicatedRepo) broadcast(b *Bucket) {
 	r.log.Debug("broadcasting", zap.Object("bucket", b))
 
 	data, err := b.MarshalBinary()
 	if err != nil {
-		return err
+		panic(err)
 	}
 
 	type operation struct {
@@ -161,11 +155,9 @@ func (r *Repo) Broadcast(b *Bucket) error {
 			r.log.Error("broadcasting", zap.String("peer", op.peer), zap.Object("bucket", b))
 		}
 	}
-
-	return nil
 }
 
-func (r *Repo) unicast(b *Bucket, addr net.Addr) error {
+func (r *ReplicatedRepo) unicast(b *Bucket, addr net.Addr) error {
 	r.log.Debug("unicasting", zap.Stringer("peer", addr), zap.Object("bucket", b))
 
 	data, err := b.MarshalBinary()
@@ -174,4 +166,70 @@ func (r *Repo) unicast(b *Bucket, addr net.Addr) error {
 	}
 	_, err = r.conn.WriteTo(data, addr)
 	return err
+}
+
+// A LocalRepo stores Buckets locally in-memory. It's safe for concurrent use.
+type LocalRepo struct {
+	mu      sync.RWMutex
+	clock   func() time.Time
+	buckets map[string]*Bucket
+}
+
+// NewLocalRepo returns a new LocalRepo with the given Buckets in it.
+func NewLocalRepo(clock func() time.Time, bs ...*Bucket) *LocalRepo {
+	r := LocalRepo{clock: clock, buckets: make(map[string]*Bucket, len(bs))}
+	for _, b := range bs {
+		r.buckets[b.name] = b
+	}
+	return &r
+}
+
+// GetBucket retrieves a Bucket with the given name, creating it first if it doesn't
+// yet exist.
+func (r *LocalRepo) GetBucket(_ context.Context, name string) (*Bucket, bool) {
+	// First try the using a read lock which is going to be the most common case and
+	// allows for concurrent reads.
+	r.mu.RLock()
+	b, ok := r.buckets[name]
+	r.mu.RUnlock()
+
+	if ok { // We have this bucket, so we return it immediately.
+		return b, ok
+	}
+
+	// Since we don't have this bucket, we need to create it and acquire the write lock.
+	// We prevent multiple writers from over-writing the bucket by first reading the Bucket
+	// again with the write lock held.
+	r.mu.Lock()
+	if b, ok = r.buckets[name]; !ok {
+		b = &Bucket{name: name, created: r.clock()}
+		r.buckets[name] = b
+	}
+	r.mu.Unlock()
+
+	return b, ok
+}
+
+// UpsertBucket upserts the given Bucket in the Repo. If it already exists, the given Bucket
+// is merged with the stored Bucket.
+func (r *LocalRepo) UpsertBucket(_ context.Context, b *Bucket) (upserted *Bucket, ok bool) {
+	r.mu.RLock()
+	prev := r.buckets[b.name]
+	r.mu.RUnlock()
+
+	if prev == b { // Fast path. Pointers are the same, so nothing to do.
+		return prev, true
+	}
+
+	r.mu.Lock()
+	if prev = r.buckets[b.name]; prev == nil {
+		b.created = r.clock()
+		r.buckets[b.name] = b
+		r.mu.Unlock()
+		return b, false
+	}
+	r.mu.Unlock()
+
+	prev.Merge(b)
+	return prev, true
 }

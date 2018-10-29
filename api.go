@@ -8,7 +8,6 @@ import (
 	"net/http/pprof"
 
 	"github.com/julienschmidt/httprouter"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -16,12 +15,12 @@ import (
 type API struct {
 	log   *zap.Logger
 	clock func() time.Time
-	repo  *Repo
+	repo  Repo
 	http.Handler
 }
 
 // NewAPI returns a new Patrol API.
-func NewAPI(l *zap.Logger, clock func() time.Time, repo *Repo) *API {
+func NewAPI(l *zap.Logger, clock func() time.Time, repo Repo) *API {
 	api := API{log: l, clock: clock, repo: repo}
 
 	rt := httprouter.New()
@@ -45,6 +44,7 @@ func NewAPI(l *zap.Logger, clock func() time.Time, repo *Repo) *API {
 
 func (api *API) error(w http.ResponseWriter, code int, err error) {
 	w.WriteHeader(code)
+	w.Write([]byte(err.Error()))
 	api.log.Error("api error", zap.Error(err))
 }
 
@@ -52,23 +52,26 @@ func (api *API) takeBucket(w http.ResponseWriter, r *http.Request) {
 	ps := httprouter.ParamsFromContext(r.Context())
 	name := ps.ByName("name")
 
-	q := r.URL.Query()
-	rate, err := ParseRate(q.Get("rate"))
-	if err != nil {
-		api.error(w, http.StatusBadRequest, errors.Wrap(err, "rate"))
+	if len(name) > maxBucketNameLength {
+		api.error(w, http.StatusBadRequest, ErrNameTooLarge)
 		return
 	}
 
-	count, err := strconv.ParseUint(q.Get("count"), 10, 64)
-	if err != nil {
+	q := r.URL.Query()
+	rate, _ := ParseRate(q.Get("rate"))
+	count, _ := strconv.ParseUint(q.Get("count"), 10, 64)
+	if count == 0 {
 		count = 1
 	}
 
-	bucket, _ := api.repo.Bucket(r.Context(), name, rate.Freq)
+	bucket, _ := api.repo.GetBucket(r.Context(), name)
+
 	code := http.StatusOK
-	if !bucket.Take(api.clock(), rate, count) {
+	remaining, ok := bucket.Take(api.clock(), rate, count)
+	if !ok {
 		code = http.StatusTooManyRequests
 	}
+	api.repo.UpsertBucket(r.Context(), bucket)
 
 	api.log.Debug(
 		"take",
@@ -78,12 +81,6 @@ func (api *API) takeBucket(w http.ResponseWriter, r *http.Request) {
 		zap.Object("bucket", bucket),
 	)
 
-	if code == http.StatusOK {
-		if err = api.repo.Broadcast(bucket); err != nil {
-			api.error(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-
 	w.WriteHeader(code)
+	w.Write([]byte(strconv.FormatUint(remaining, 10)))
 }
