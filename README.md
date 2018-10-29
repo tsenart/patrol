@@ -66,12 +66,14 @@ need to synchronize clocks across the cluster.
 Under a network partition, nodes won't be able to actively replicate `Bucket` state to nodes on
 other sides of the partition. The effect of this is that a `Bucket`'s global rate limit
 will be multiplied by the number of sides in a partition and will lead to temporary policy
-violations until the partition heals; in other words, Patrol fails-open under netsplits.
+violations until the partition heals; in other words, Patrol fails-closed under netsplits,
+accepting all requests as long as they don't exceed the global rate limit, ignoring what's
+going on in the rest of the cluster.
 
 This is a choice of *Availability* over *Consistency*: *AP* in the CAP theorem.
 
 In the future, it might be interesting to make this trade-off configurable and to instead fail
-close under network partitions.
+open under network partitions, and, thus, reject all requests.
 
 ### Cluster discovery
 
