@@ -67,9 +67,9 @@ func TestBucket_Take(t *testing.T) {
 
 func TestBucket_Merge(t *testing.T) {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	buckets := make([]*Bucket, 100)
+	buckets := make([]Bucket, 100)
 	for i := range buckets {
-		buckets[i] = &Bucket{
+		buckets[i] = Bucket{
 			added:   rng.Float64(),              // The P of the PN counter "tokens".
 			taken:   rng.Float64(),              // The N of the PN counter "tokens".
 			elapsed: time.Duration(rng.Int63()), // A separate "elapsed" duration G-Counter.
@@ -79,7 +79,7 @@ func TestBucket_Merge(t *testing.T) {
 	// Compute the result of a merged bucket with sequential operations.
 	var sequential Bucket
 	for _, bucket := range buckets {
-		sequential.Merge(&sequential, bucket)
+		sequential.Merge(&sequential, &bucket)
 	}
 
 	// Compute multiple random sequences of merge operations and compare with
@@ -96,13 +96,13 @@ func TestBucket_Merge(t *testing.T) {
 			buckets[i], buckets[j] = buckets[j], buckets[i]
 		})
 
-		random := buckets[rng.Int()%len(buckets)]
+		var random Bucket
 		for _, bucket := range buckets {
 			// Explicitly test idempotence by merging the same bucket twice.
-			random.Merge(bucket, bucket)
+			random.Merge(&bucket, &bucket)
 		}
 
-		if *random != sequential {
+		if random != sequential {
 			t.Fatalf(
 				"Buckets merged in random order diverged from sequential result:\nhave: %v\nwant: %v\nbuckets: %v",
 				random,
